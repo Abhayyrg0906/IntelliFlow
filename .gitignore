@@ -1,0 +1,55 @@
+# Maven
+target/
+*.jar
+*.war
+*.ear
+*.zip
+*.tar.gz
+*.rar
+
+# Java Compiler/Class Files
+*.class
+
+# Logs
+*.log
+
+# IDEs and Editors
+# IntelliJ IDEA
+.idea/
+*.iml
+*.iws
+*.ipr
+out/
+
+# VS Code
+.vscode/
+
+# Eclipse
+.classpath
+.project
+.settings/
+
+# Operating System Files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Local Environment and Secrets
+.env
+.env.*
+application-local.properties
+application-local.yml
+application-local.yaml
+db-local.properties
+
+# Build/temporary files
+temp/
+tmp/
+
+# Ensure Maven Wrapper and core files are never ignored
+!mvnw
+!mvnw.cmd
+!.mvn/wrapper/
+!pom.xml
+!schema.sql
+!README.md

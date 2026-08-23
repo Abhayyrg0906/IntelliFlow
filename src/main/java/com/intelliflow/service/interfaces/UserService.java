@@ -1,0 +1,18 @@
+package com.intelliflow.service.interfaces;
+
+import com.intelliflow.exception.AuthenticationException;
+import com.intelliflow.exception.DatabaseException;
+import com.intelliflow.exception.ValidationException;
+import com.intelliflow.model.ActivityLog;
+import com.intelliflow.model.User;
+import java.util.List;
+
+public interface UserService {
+    User authenticate(String username, String password) throws AuthenticationException, DatabaseException;
+    User register(User user, String plainTextPassword) throws ValidationException, DatabaseException;
+    List<User> getAllUsers() throws DatabaseException;
+    void deleteUser(int id) throws DatabaseException;
+    void updateUser(User user) throws DatabaseException, ValidationException;
+    void bootstrapDefaultUsers() throws DatabaseException;
+    List<ActivityLog> getActivityLogs() throws DatabaseException;
+}
