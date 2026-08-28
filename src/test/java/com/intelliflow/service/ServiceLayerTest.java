@@ -337,6 +337,9 @@ public class ServiceLayerTest {
             projectService.createProject(project);
         });
 
+        // Clean session before registering manager (simulating logout/guest registration flow)
+        UserSession.getInstance().cleanSession();
+
         // Now create a manager user
         User manager = new User();
         manager.setUsername("manager");
@@ -497,6 +500,9 @@ public class ServiceLayerTest {
         project.setStatus(ProjectStatus.ACTIVE);
         Project savedProj = projectService.createProject(project);
 
+        // Clean session before registering another manager user (simulating guest signup flow)
+        UserSession.getInstance().cleanSession();
+
         // Register a Manager user to try and assign a task to them (which is invalid)
         User anotherManager = new User();
         anotherManager.setUsername("manager2");
@@ -504,6 +510,9 @@ public class ServiceLayerTest {
         anotherManager.setRole(Role.MANAGER); // Role is MANAGER, not EMPLOYEE
         anotherManager.setFullName("Second Manager");
         User savedMgr2 = userService.register(anotherManager, "Password123!");
+
+        // Restore Manager Session for task operations
+        UserSession.getInstance().startSession(manager);
 
         Task task = new Task();
         task.setProjectId(savedProj.getId());
@@ -585,6 +594,9 @@ public class ServiceLayerTest {
         Project createdMgrProj = projectService.createProject(mgrProject);
         assertNotNull(createdMgrProj);
 
+        // Clean active manager session before registering another user (simulating guest signup flow)
+        UserSession.getInstance().cleanSession();
+
         // Register an Employee
         User employee = new User();
         employee.setUsername("testemployee");
@@ -621,5 +633,80 @@ public class ServiceLayerTest {
         assertThrows(UnauthorizedException.class, () -> {
             taskService.createTask(empTask);
         });
+    }
+
+    @Test
+    public void testTaskSortingLogic() {
+        // Create sample tasks
+        Task t1 = new Task();
+        t1.setName("Task Low No Deadline");
+        t1.setPriority(TaskPriority.LOW);
+        t1.setDeadline(null);
+
+        Task t2 = new Task();
+        t2.setName("Task Critical Due Today");
+        t2.setPriority(TaskPriority.CRITICAL);
+        t2.setDeadline(LocalDate.now());
+
+        Task t3 = new Task();
+        t3.setName("Task Critical Due in 3 days");
+        t3.setPriority(TaskPriority.CRITICAL);
+        t3.setDeadline(LocalDate.now().plusDays(3));
+
+        Task t4 = new Task();
+        t4.setName("Task High Due Tomorrow");
+        t4.setPriority(TaskPriority.HIGH);
+        t4.setDeadline(LocalDate.now().plusDays(1));
+
+        Task t5 = new Task();
+        t5.setName("Task High Due in 7 days");
+        t5.setPriority(TaskPriority.HIGH);
+        t5.setDeadline(LocalDate.now().plusDays(7));
+
+        Task t6 = new Task();
+        t6.setName("Task Medium Due in 2 days");
+        t6.setPriority(TaskPriority.MEDIUM);
+        t6.setDeadline(LocalDate.now().plusDays(2));
+
+        Task t7 = new Task();
+        t7.setName("Task Low Due Tomorrow");
+        t7.setPriority(TaskPriority.LOW);
+        t7.setDeadline(LocalDate.now().plusDays(1));
+
+        List<Task> tasks = new java.util.ArrayList<>(List.of(t1, t2, t3, t4, t5, t6, t7));
+
+        // Sort using RECOMMENDED_COMPARATOR
+        tasks.sort(com.intelliflow.util.TaskSorter.RECOMMENDED_COMPARATOR);
+
+        // Expected order:
+        // 1. Task Critical Due Today (t2)
+        // 2. Task Critical Due in 3 days (t3)
+        // 3. Task High Due Tomorrow (t4)
+        // 4. Task High Due in 7 days (t5)
+        // 5. Task Medium Due in 2 days (t6)
+        // 6. Task Low Due Tomorrow (t7)
+        // 7. Task Low No Deadline (t1)
+
+        assertEquals("Task Critical Due Today", tasks.get(0).getName());
+        assertEquals("Task Critical Due in 3 days", tasks.get(1).getName());
+        assertEquals("Task High Due Tomorrow", tasks.get(2).getName());
+        assertEquals("Task High Due in 7 days", tasks.get(3).getName());
+        assertEquals("Task Medium Due in 2 days", tasks.get(4).getName());
+        assertEquals("Task Low Due Tomorrow", tasks.get(5).getName());
+        assertEquals("Task Low No Deadline", tasks.get(6).getName());
+
+        // Sort using PRIORITY_COMPARATOR
+        tasks.sort(com.intelliflow.util.TaskSorter.PRIORITY_COMPARATOR);
+        assertEquals(TaskPriority.CRITICAL, tasks.get(0).getPriority());
+        assertEquals(TaskPriority.CRITICAL, tasks.get(1).getPriority());
+        assertEquals(TaskPriority.HIGH, tasks.get(2).getPriority());
+        assertEquals(TaskPriority.HIGH, tasks.get(3).getPriority());
+
+        // Sort using DEADLINE_COMPARATOR
+        tasks.sort(com.intelliflow.util.TaskSorter.DEADLINE_COMPARATOR);
+        // t2 (due today) comes first since it is earliest
+        assertEquals("Task Critical Due Today", tasks.get(0).getName());
+        // t1 (no deadline) comes last
+        assertEquals("Task Low No Deadline", tasks.get(6).getName());
     }
 }

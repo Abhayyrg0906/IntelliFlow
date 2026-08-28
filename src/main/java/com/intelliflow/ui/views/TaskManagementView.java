@@ -13,6 +13,9 @@ import com.intelliflow.ui.ThemeManager;
 import com.intelliflow.ui.components.EmptyStatePanel;
 import com.intelliflow.ui.components.ModernTable;
 import com.intelliflow.ui.components.RoundedPanel;
+import com.intelliflow.util.TaskSorter;
+import java.util.Locale;
+import java.time.temporal.ChronoUnit;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
@@ -86,6 +89,15 @@ public class TaskManagementView extends BaseView {
 
     // Empty state Panel fallback
     private EmptyStatePanel emptyPanel;
+
+    // Summary panel components
+    private RoundedPanel summaryPanel;
+    private JLabel criticalLabel;
+    private JLabel highLabel;
+    private JLabel dueTodayLabel;
+    private JLabel overdueLabel;
+
+    private final DateTimeFormatter friendlyDtf = DateTimeFormatter.ofPattern("MMM dd, yyyy", Locale.US);
 
     public TaskManagementView(MainFrame mainFrame) {
         this.mainFrame = mainFrame;
@@ -198,12 +210,13 @@ public class TaskManagementView extends BaseView {
         filtersBar.add(priorityCombo);
 
         // Sort Combo
-        filtersBar.add(new JLabel("Sort:"));
+        filtersBar.add(new JLabel("Sort by:"));
         sortCombo = new JComboBox<>(new String[]{
-            "Sort by Name",
-            "Sort by Date (Due)",
-            "Sort by Priority",
-            "Sort by Status"
+            "Recommended",
+            "Priority",
+            "Deadline",
+            "Created Date",
+            "Task Name"
         });
         sortCombo.setPreferredSize(new Dimension(140, 28));
         sortCombo.addActionListener(e -> applyFilters());
@@ -316,12 +329,49 @@ public class TaskManagementView extends BaseView {
         kanbanBoardPanel.add(createKanbanColumn("COMPLETED", ThemeManager.COLOR_SUCCESS, completedCountBadge, completedColPanel));
         kanbanBoardPanel.add(createKanbanColumn("BLOCKED", ThemeManager.COLOR_DANGER, blockedCountBadge, blockedColPanel));
 
+        // Initialize Summary Panel
+        summaryPanel = new RoundedPanel(10, ThemeManager.COLOR_CARD);
+        summaryPanel.setDrawBorder(true);
+        summaryPanel.setBorderColor(ThemeManager.COLOR_BORDER);
+        summaryPanel.setLayout(new FlowLayout(FlowLayout.LEFT, 20, 8));
+        summaryPanel.setBorder(new EmptyBorder(6, 16, 6, 16));
+
+        JLabel titleLabel = new JLabel("⚠️ Task Attention Required:");
+        titleLabel.setFont(ThemeManager.FONT_BOLD_SMALL);
+        titleLabel.setForeground(ThemeManager.COLOR_TEXT_PRIMARY);
+        summaryPanel.add(titleLabel);
+
+        criticalLabel = new JLabel("🔴 Critical: 0");
+        criticalLabel.setFont(ThemeManager.FONT_BOLD_SMALL);
+        criticalLabel.setForeground(ThemeManager.COLOR_TEXT_MUTED);
+        summaryPanel.add(criticalLabel);
+
+        highLabel = new JLabel("🟠 High: 0");
+        highLabel.setFont(ThemeManager.FONT_BOLD_SMALL);
+        highLabel.setForeground(ThemeManager.COLOR_TEXT_MUTED);
+        summaryPanel.add(highLabel);
+
+        dueTodayLabel = new JLabel("🔥 Due Today: 0");
+        dueTodayLabel.setFont(ThemeManager.FONT_BOLD_SMALL);
+        dueTodayLabel.setForeground(ThemeManager.COLOR_TEXT_MUTED);
+        summaryPanel.add(dueTodayLabel);
+
+        overdueLabel = new JLabel("⛔ Overdue: 0");
+        overdueLabel.setFont(ThemeManager.FONT_BOLD_SMALL);
+        overdueLabel.setForeground(ThemeManager.COLOR_TEXT_MUTED);
+        summaryPanel.add(overdueLabel);
+
         kanbanScroll = new JScrollPane(kanbanBoardPanel);
         kanbanScroll.setBorder(BorderFactory.createEmptyBorder());
         kanbanScroll.setOpaque(false);
         kanbanScroll.getViewport().setOpaque(false);
 
-        viewContainer.add(kanbanScroll, "kanban");
+        JPanel kanbanWrapper = new JPanel(new BorderLayout(0, 10));
+        kanbanWrapper.setOpaque(false);
+        kanbanWrapper.add(summaryPanel, BorderLayout.NORTH);
+        kanbanWrapper.add(kanbanScroll, BorderLayout.CENTER);
+
+        viewContainer.add(kanbanWrapper, "kanban");
 
         add(viewContainer, BorderLayout.CENTER);
         cardLayout.show(viewContainer, "kanban"); // default view is Kanban Board
@@ -584,13 +634,15 @@ public class TaskManagementView extends BaseView {
         // Sorting
         int sortIndex = sortCombo.getSelectedIndex();
         if (sortIndex == 0) {
-            filtered.sort((t1, t2) -> t1.getName().compareToIgnoreCase(t2.getName()));
+            filtered.sort(TaskSorter.RECOMMENDED_COMPARATOR);
         } else if (sortIndex == 1) {
-            filtered.sort((t1, t2) -> t1.getDeadline().compareTo(t2.getDeadline()));
+            filtered.sort(TaskSorter.PRIORITY_COMPARATOR);
         } else if (sortIndex == 2) {
-            filtered.sort((t1, t2) -> Integer.compare(getPriorityWeight(t2.getPriority()), getPriorityWeight(t1.getPriority())));
+            filtered.sort(TaskSorter.DEADLINE_COMPARATOR);
         } else if (sortIndex == 3) {
-            filtered.sort((t1, t2) -> Integer.compare(getStatusWeight(t1.getStatus()), getStatusWeight(t2.getStatus())));
+            filtered.sort(TaskSorter.CREATED_DATE_COMPARATOR);
+        } else if (sortIndex == 4) {
+            filtered.sort(TaskSorter.NAME_COMPARATOR);
         }
         
         displayedTasks = filtered;
@@ -663,10 +715,33 @@ public class TaskManagementView extends BaseView {
         cardLayout.show(viewContainer, isKanbanMode ? "kanban" : "table");
 
         int todoCount = 0, progressCount = 0, testingCount = 0, completedCount = 0, blockedCount = 0;
+        int attentionCritical = 0;
+        int attentionHigh = 0;
+        int attentionDueToday = 0;
+        int attentionOverdue = 0;
+
+        LocalDate today = LocalDate.now();
 
         for (Task t : displayedTasks) {
             JPanel card = createTaskCard(t);
             cardPanels.add((RoundedPanel) card);
+
+            // Calculate attention stats (only for non-completed tasks)
+            if (t.getStatus() != TaskStatus.COMPLETED) {
+                if (t.getPriority() == TaskPriority.CRITICAL) {
+                    attentionCritical++;
+                }
+                if (t.getPriority() == TaskPriority.HIGH) {
+                    attentionHigh++;
+                }
+                if (t.getDeadline() != null) {
+                    if (t.getDeadline().isBefore(today)) {
+                        attentionOverdue++;
+                    } else if (t.getDeadline().isEqual(today)) {
+                        attentionDueToday++;
+                    }
+                }
+            }
 
             switch (t.getStatus()) {
                 case TO_DO -> { todoColPanel.add(card); todoColPanel.add(Box.createVerticalStrut(10)); todoCount++; }
@@ -676,6 +751,19 @@ public class TaskManagementView extends BaseView {
                 case BLOCKED -> { blockedColPanel.add(card); blockedColPanel.add(Box.createVerticalStrut(10)); blockedCount++; }
             }
         }
+
+        // Update attention labels with values and dynamic colored feedback
+        criticalLabel.setText("🔴 Critical: " + attentionCritical);
+        criticalLabel.setForeground(attentionCritical > 0 ? ThemeManager.COLOR_DANGER : ThemeManager.COLOR_TEXT_MUTED);
+
+        highLabel.setText("🟠 High: " + attentionHigh);
+        highLabel.setForeground(attentionHigh > 0 ? ThemeManager.COLOR_WARNING : ThemeManager.COLOR_TEXT_MUTED);
+
+        dueTodayLabel.setText("🔥 Due Today: " + attentionDueToday);
+        dueTodayLabel.setForeground(attentionDueToday > 0 ? new Color(249, 115, 22) : ThemeManager.COLOR_TEXT_MUTED);
+
+        overdueLabel.setText("⛔ Overdue: " + attentionOverdue);
+        overdueLabel.setForeground(attentionOverdue > 0 ? ThemeManager.COLOR_DANGER : ThemeManager.COLOR_TEXT_MUTED);
 
         // Add empty states for empty columns
         if (todoCount == 0) {
@@ -829,10 +917,41 @@ public class TaskManagementView extends BaseView {
         // Due date
         gbc.gridy++;
         gbc.insets = new Insets(0, 0, 10, 0);
-        boolean isOverdue = t.getStatus() != TaskStatus.COMPLETED && t.getDeadline().isBefore(LocalDate.now());
-        JLabel dateLabel = new JLabel("📅 " + t.getDeadline().toString());
-        dateLabel.setFont(ThemeManager.FONT_SMALL);
-        dateLabel.setForeground(isOverdue ? ThemeManager.COLOR_DANGER : ThemeManager.COLOR_TEXT_MUTED);
+        JLabel dateLabel = new JLabel();
+        LocalDate deadline = t.getDeadline();
+        if (deadline == null) {
+            dateLabel.setText("📅 No deadline");
+            dateLabel.setFont(ThemeManager.FONT_SMALL);
+            dateLabel.setForeground(ThemeManager.COLOR_TEXT_MUTED);
+        } else if (t.getStatus() == TaskStatus.COMPLETED) {
+            dateLabel.setText("📅 Due: " + deadline.format(friendlyDtf));
+            dateLabel.setFont(ThemeManager.FONT_SMALL);
+            dateLabel.setForeground(ThemeManager.COLOR_TEXT_MUTED);
+        } else {
+            LocalDate today = LocalDate.now();
+            long daysRemaining = ChronoUnit.DAYS.between(today, deadline);
+            if (daysRemaining < 0) {
+                dateLabel.setText("⛔ Overdue: " + deadline.format(friendlyDtf));
+                dateLabel.setFont(ThemeManager.FONT_BOLD_SMALL);
+                dateLabel.setForeground(ThemeManager.COLOR_DANGER);
+            } else if (daysRemaining == 0) {
+                dateLabel.setText("🔥 Due Today");
+                dateLabel.setFont(ThemeManager.FONT_BOLD_SMALL);
+                dateLabel.setForeground(new Color(249, 115, 22)); // Orange
+            } else if (daysRemaining >= 1 && daysRemaining <= 2) {
+                dateLabel.setText("⚠️ Due Soon: " + deadline.format(friendlyDtf));
+                dateLabel.setFont(ThemeManager.FONT_BOLD_SMALL);
+                dateLabel.setForeground(ThemeManager.COLOR_WARNING); // Amber
+            } else if (daysRemaining >= 3 && daysRemaining <= 7) {
+                dateLabel.setText("📅 Due Soon: " + deadline.format(friendlyDtf));
+                dateLabel.setFont(ThemeManager.FONT_SMALL);
+                dateLabel.setForeground(new Color(59, 130, 246)); // Blue
+            } else {
+                dateLabel.setText("📅 Due: " + deadline.format(friendlyDtf));
+                dateLabel.setFont(ThemeManager.FONT_SMALL);
+                dateLabel.setForeground(ThemeManager.COLOR_TEXT_MUTED);
+            }
+        }
         card.add(dateLabel, gbc);
 
         // Separator divider

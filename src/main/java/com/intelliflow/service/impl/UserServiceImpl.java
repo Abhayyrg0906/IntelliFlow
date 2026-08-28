@@ -1,5 +1,6 @@
 package com.intelliflow.service.impl;
 
+import com.intelliflow.context.UserSession;
 import com.intelliflow.dao.impl.ActivityLogDAOImpl;
 import com.intelliflow.dao.impl.UserDAOImpl;
 import com.intelliflow.dao.interfaces.ActivityLogDAO;
@@ -7,6 +8,7 @@ import com.intelliflow.dao.interfaces.UserDAO;
 import com.intelliflow.enums.Role;
 import com.intelliflow.exception.AuthenticationException;
 import com.intelliflow.exception.DatabaseException;
+import com.intelliflow.exception.UnauthorizedException;
 import com.intelliflow.exception.ValidationException;
 import com.intelliflow.model.ActivityLog;
 import com.intelliflow.model.User;
@@ -61,6 +63,20 @@ public class UserServiceImpl implements UserService {
 
     @Override
     public User register(User user, String plainTextPassword) throws ValidationException, DatabaseException {
+        // Authorization Enforce
+        User currentUser = UserSession.getInstance().getCurrentUser();
+        if (currentUser != null) {
+            if (currentUser.getRole() != Role.ADMIN) {
+                throw new UnauthorizedException("Access Denied: Only Administrators can register new accounts inside the platform.");
+            }
+        } else {
+            if (user != null && user.getRole() == Role.ADMIN) {
+                if (!userDAO.findAll().isEmpty()) {
+                    throw new UnauthorizedException("Access Denied: Self-registration as an Administrator is not allowed.");
+                }
+            }
+        }
+
         // Validation Checks
         if (user == null) {
             throw new ValidationException("User information cannot be null.");
@@ -116,11 +132,23 @@ public class UserServiceImpl implements UserService {
 
     @Override
     public void deleteUser(int id) throws DatabaseException {
+        User currentUser = UserSession.getInstance().getCurrentUser();
+        if (currentUser == null || currentUser.getRole() != Role.ADMIN) {
+            throw new UnauthorizedException("Access Denied: Only Administrators can delete user accounts.");
+        }
         userDAO.delete(id);
     }
 
     @Override
     public void updateUser(User user) throws DatabaseException, ValidationException {
+        User currentUser = UserSession.getInstance().getCurrentUser();
+        if (currentUser == null) {
+            throw new UnauthorizedException("Access Denied: Session is not active.");
+        }
+        if (currentUser.getRole() != Role.ADMIN && currentUser.getId() != user.getId()) {
+            throw new UnauthorizedException("Access Denied: You can only update your own profile details.");
+        }
+
         if (user == null) {
             throw new ValidationException("User cannot be null.");
         }
@@ -188,6 +216,10 @@ public class UserServiceImpl implements UserService {
 
     @Override
     public List<ActivityLog> getActivityLogs() throws DatabaseException {
+        User currentUser = UserSession.getInstance().getCurrentUser();
+        if (currentUser == null || currentUser.getRole() != Role.ADMIN) {
+            throw new UnauthorizedException("Access Denied: Only Administrators can view system activity logs.");
+        }
         return logDAO.findAll();
     }
 }

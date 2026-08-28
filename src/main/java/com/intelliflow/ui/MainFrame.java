@@ -234,6 +234,21 @@ public class MainFrame extends JFrame {
                 return;
             }
 
+            User currentUser = UserSession.getInstance().getCurrentUser();
+            Role role = currentUser.getRole();
+
+            // Enforce role-based routing checks
+            if (("users".equals(viewName) || "logs".equals(viewName)) && role != Role.ADMIN) {
+                JOptionPane.showMessageDialog(this, "Access Denied: Only System Administrators can access this screen.", "Unauthorized Access", JOptionPane.ERROR_MESSAGE);
+                showView("dashboard");
+                return;
+            }
+            if ("reports".equals(viewName) && role == Role.EMPLOYEE) {
+                JOptionPane.showMessageDialog(this, "Access Denied: Standard Employees are not authorized to access performance reports.", "Unauthorized Access", JOptionPane.ERROR_MESSAGE);
+                showView("dashboard");
+                return;
+            }
+
             // Ensure full navigation layouts are set
             add(sidebarPanel, BorderLayout.WEST);
             add(headerPanel, BorderLayout.NORTH);
@@ -244,7 +259,7 @@ public class MainFrame extends JFrame {
             updateSidebarPermissions();
 
             // Update Header user badge
-            User currentUser = UserSession.getInstance().getCurrentUser();
+            currentUser = UserSession.getInstance().getCurrentUser();
             userProfileBadge.setText("👤 " + currentUser.getFullName() + " (" + currentUser.getRole() + ")");
 
             // Sync Notification badge counts

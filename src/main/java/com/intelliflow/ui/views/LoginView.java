@@ -190,8 +190,14 @@ public class LoginView extends BaseView {
         String username = usernameField.getText().trim();
         String password = new String(passwordField.getPassword());
 
-        if (username.isEmpty() || password.isEmpty()) {
+        if (username.isEmpty() && password.isEmpty()) {
             errorLabel.setText("Please enter both username and password.");
+            return;
+        } else if (username.isEmpty()) {
+            errorLabel.setText("Please enter your username.");
+            return;
+        } else if (password.isEmpty()) {
+            errorLabel.setText("Please enter your password.");
             return;
         }
 
