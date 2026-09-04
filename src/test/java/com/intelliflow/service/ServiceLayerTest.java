@@ -783,4 +783,65 @@ public class ServiceLayerTest {
         assertEquals("High Due Tomorrow", sortingTasks.get(2).getName());
         assertEquals("High No Deadline", sortingTasks.get(3).getName());
     }
+
+    @Test
+    public void testDeadlineIntelligenceAndOverdueDetection() {
+        LocalDate today = LocalDate.of(2026, 9, 4);
+
+        // 1. Future deadline (>7 days) -> ON_SCHEDULE
+        Task futureTask = new Task();
+        futureTask.setName("Future Architecture");
+        futureTask.setDeadline(today.plusDays(10)); // Sep 14, 2026
+        futureTask.setStatus(TaskStatus.TO_DO);
+        assertEquals(com.intelliflow.enums.DeadlineState.ON_SCHEDULE, com.intelliflow.util.DeadlineUtil.calculateDeadlineState(futureTask, today));
+        assertEquals("📅 Due: Sep 14, 2026", com.intelliflow.util.DeadlineUtil.formatDeadlineDisplay(futureTask, today, null));
+
+        // 2. Upcoming (3-7 days) -> UPCOMING
+        Task upcomingTask = new Task();
+        upcomingTask.setName("Upcoming Feature");
+        upcomingTask.setDeadline(today.plusDays(5)); // Sep 09, 2026
+        upcomingTask.setStatus(TaskStatus.IN_PROGRESS);
+        assertEquals(com.intelliflow.enums.DeadlineState.UPCOMING, com.intelliflow.util.DeadlineUtil.calculateDeadlineState(upcomingTask, today));
+        assertEquals("📅 Due Soon: Sep 09, 2026", com.intelliflow.util.DeadlineUtil.formatDeadlineDisplay(upcomingTask, today, null));
+
+        // 3. Due Soon (1-2 days) -> DUE_SOON
+        Task dueSoonTask = new Task();
+        dueSoonTask.setName("Due Soon Bugfix");
+        dueSoonTask.setDeadline(today.plusDays(2)); // Sep 06, 2026
+        dueSoonTask.setStatus(TaskStatus.TESTING);
+        assertEquals(com.intelliflow.enums.DeadlineState.DUE_SOON, com.intelliflow.util.DeadlineUtil.calculateDeadlineState(dueSoonTask, today));
+        assertEquals("⚠️ Due Soon: Sep 06, 2026", com.intelliflow.util.DeadlineUtil.formatDeadlineDisplay(dueSoonTask, today, null));
+
+        // 4. Due Today (0 days) -> DUE_TODAY
+        Task dueTodayTask = new Task();
+        dueTodayTask.setName("Deploy Today");
+        dueTodayTask.setDeadline(today);
+        dueTodayTask.setStatus(TaskStatus.IN_PROGRESS);
+        assertEquals(com.intelliflow.enums.DeadlineState.DUE_TODAY, com.intelliflow.util.DeadlineUtil.calculateDeadlineState(dueTodayTask, today));
+        assertEquals("🔥 Due Today", com.intelliflow.util.DeadlineUtil.formatDeadlineDisplay(dueTodayTask, today, null));
+
+        // 5. Overdue (<0 days) -> OVERDUE
+        Task overdueTask = new Task();
+        overdueTask.setName("Overdue Migration");
+        overdueTask.setDeadline(today.minusDays(3)); // Sep 01, 2026
+        overdueTask.setStatus(TaskStatus.TO_DO);
+        assertEquals(com.intelliflow.enums.DeadlineState.OVERDUE, com.intelliflow.util.DeadlineUtil.calculateDeadlineState(overdueTask, today));
+        assertEquals("⛔ Overdue: Sep 01, 2026", com.intelliflow.util.DeadlineUtil.formatDeadlineDisplay(overdueTask, today, null));
+
+        // 6. Completed Overdue Task -> COMPLETED (Must NOT be marked as active overdue)
+        Task completedOverdueTask = new Task();
+        completedOverdueTask.setName("Completed Past Task");
+        completedOverdueTask.setDeadline(today.minusDays(10)); // Aug 25, 2026
+        completedOverdueTask.setStatus(TaskStatus.COMPLETED);
+        assertEquals(com.intelliflow.enums.DeadlineState.COMPLETED, com.intelliflow.util.DeadlineUtil.calculateDeadlineState(completedOverdueTask, today));
+        assertEquals("📅 Due: Aug 25, 2026", com.intelliflow.util.DeadlineUtil.formatDeadlineDisplay(completedOverdueTask, today, null));
+
+        // 7. No deadline -> NO_DEADLINE
+        Task noDeadlineTask = new Task();
+        noDeadlineTask.setName("No Deadline Research");
+        noDeadlineTask.setDeadline(null);
+        noDeadlineTask.setStatus(TaskStatus.TO_DO);
+        assertEquals(com.intelliflow.enums.DeadlineState.NO_DEADLINE, com.intelliflow.util.DeadlineUtil.calculateDeadlineState(noDeadlineTask, today));
+        assertEquals("📅 No deadline", com.intelliflow.util.DeadlineUtil.formatDeadlineDisplay(noDeadlineTask, today, null));
+    }
 }

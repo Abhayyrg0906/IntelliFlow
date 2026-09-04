@@ -14,6 +14,8 @@ import com.intelliflow.ui.components.EmptyStatePanel;
 import com.intelliflow.ui.components.ModernTable;
 import com.intelliflow.ui.components.RoundedPanel;
 import com.intelliflow.util.TaskSorter;
+import com.intelliflow.enums.DeadlineState;
+import com.intelliflow.util.DeadlineUtil;
 import java.util.Locale;
 import java.time.temporal.ChronoUnit;
 
@@ -965,36 +967,26 @@ public class TaskManagementView extends BaseView {
         gbc.gridy++;
         gbc.insets = new Insets(0, 0, 10, 0);
         JLabel dateLabel = new JLabel();
-        LocalDate deadline = t.getDeadline();
-        if (deadline == null) {
-            dateLabel.setText("📅 No deadline");
-            dateLabel.setFont(ThemeManager.FONT_SMALL);
-            dateLabel.setForeground(ThemeManager.COLOR_TEXT_MUTED);
-        } else if (t.getStatus() == TaskStatus.COMPLETED) {
-            dateLabel.setText("📅 Due: " + deadline.format(friendlyDtf));
-            dateLabel.setFont(ThemeManager.FONT_SMALL);
-            dateLabel.setForeground(ThemeManager.COLOR_TEXT_MUTED);
-        } else {
-            LocalDate today = LocalDate.now();
-            long daysRemaining = ChronoUnit.DAYS.between(today, deadline);
-            if (daysRemaining < 0) {
-                dateLabel.setText("⛔ Overdue: " + deadline.format(friendlyDtf));
+        dateLabel.setText(DeadlineUtil.formatDeadlineDisplay(t));
+        DeadlineState deadlineState = DeadlineUtil.calculateDeadlineState(t);
+        switch (deadlineState) {
+            case OVERDUE -> {
                 dateLabel.setFont(ThemeManager.FONT_BOLD_SMALL);
                 dateLabel.setForeground(ThemeManager.COLOR_DANGER);
-            } else if (daysRemaining == 0) {
-                dateLabel.setText("🔥 Due Today");
+            }
+            case DUE_TODAY -> {
                 dateLabel.setFont(ThemeManager.FONT_BOLD_SMALL);
                 dateLabel.setForeground(new Color(249, 115, 22)); // Orange
-            } else if (daysRemaining >= 1 && daysRemaining <= 2) {
-                dateLabel.setText("⚠️ Due Soon: " + deadline.format(friendlyDtf));
+            }
+            case DUE_SOON -> {
                 dateLabel.setFont(ThemeManager.FONT_BOLD_SMALL);
                 dateLabel.setForeground(ThemeManager.COLOR_WARNING); // Amber
-            } else if (daysRemaining >= 3 && daysRemaining <= 7) {
-                dateLabel.setText("📅 Due Soon: " + deadline.format(friendlyDtf));
+            }
+            case UPCOMING -> {
                 dateLabel.setFont(ThemeManager.FONT_SMALL);
                 dateLabel.setForeground(new Color(59, 130, 246)); // Blue
-            } else {
-                dateLabel.setText("📅 Due: " + deadline.format(friendlyDtf));
+            }
+            default -> {
                 dateLabel.setFont(ThemeManager.FONT_SMALL);
                 dateLabel.setForeground(ThemeManager.COLOR_TEXT_MUTED);
             }
