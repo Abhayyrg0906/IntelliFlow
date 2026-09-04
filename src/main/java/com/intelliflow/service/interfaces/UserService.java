@@ -15,4 +15,5 @@ public interface UserService {
     void updateUser(User user) throws DatabaseException, ValidationException;
     void bootstrapDefaultUsers() throws DatabaseException;
     List<ActivityLog> getActivityLogs() throws DatabaseException;
+    List<ActivityLog> getActivityLogsForUser(User user) throws DatabaseException;
 }

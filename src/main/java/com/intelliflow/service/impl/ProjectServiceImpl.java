@@ -64,10 +64,11 @@ public class ProjectServiceImpl implements ProjectService {
         Project created = projectDAO.create(project);
 
         User currentUser = UserSession.getInstance().getCurrentUser();
+        String actor = currentUser != null ? currentUser.getFullName() : "System";
         ActivityLog audit = new ActivityLog();
         audit.setUserId(currentUser != null ? currentUser.getId() : null);
         audit.setAction("PROJECT_CREATE");
-        audit.setDescription("Created project: " + created.getName() + " (ID: " + created.getId() + ")");
+        audit.setDescription(actor + " created project " + created.getName());
         logDAO.create(audit);
 
         if (created.getManagerId() != null) {
@@ -95,25 +96,47 @@ public class ProjectServiceImpl implements ProjectService {
         projectDAO.update(project);
 
         User currentUser = UserSession.getInstance().getCurrentUser();
-        ActivityLog audit = new ActivityLog();
-        audit.setUserId(currentUser != null ? currentUser.getId() : null);
-        audit.setAction("PROJECT_UPDATE");
-        audit.setDescription("Updated project: " + project.getName() + " (ID: " + project.getId() + ")");
-        logDAO.create(audit);
 
         if (original != null) {
             // Manager assigned/changed
             if (project.getManagerId() != null && !project.getManagerId().equals(original.getManagerId())) {
                 sendNotification(project.getManagerId(), "You have been assigned as Manager for project: " + project.getName());
+                ActivityLog assignLog = new ActivityLog();
+                assignLog.setUserId(currentUser != null ? currentUser.getId() : null);
+                assignLog.setAction("PROJECT_MANAGER_ASSIGN");
+                assignLog.setDescription("Assigned Manager for project: " + project.getName());
+                logDAO.create(assignLog);
             }
             // Status changed
-            if (project.getStatus() != original.getStatus() && project.getManagerId() != null) {
-                sendNotification(project.getManagerId(), "Project '" + project.getName() + "' status changed from " + original.getStatus() + " to " + project.getStatus());
+            if (project.getStatus() != original.getStatus()) {
+                ActivityLog statusLog = new ActivityLog();
+                statusLog.setUserId(currentUser != null ? currentUser.getId() : null);
+                statusLog.setAction("PROJECT_STATUS_CHANGE");
+                statusLog.setDescription("Project '" + project.getName() + "' status changed " + original.getStatus() + " → " + project.getStatus());
+                logDAO.create(statusLog);
+
+                if (project.getManagerId() != null) {
+                    sendNotification(project.getManagerId(), "Project '" + project.getName() + "' status changed from " + original.getStatus() + " to " + project.getStatus());
+                }
             }
             // Deadline changed
-            if (project.getDeadline() != null && !project.getDeadline().equals(original.getDeadline()) && project.getManagerId() != null) {
-                sendNotification(project.getManagerId(), "Project '" + project.getName() + "' deadline changed to " + project.getDeadline());
+            if (project.getDeadline() != null && !project.getDeadline().equals(original.getDeadline())) {
+                ActivityLog dlLog = new ActivityLog();
+                dlLog.setUserId(currentUser != null ? currentUser.getId() : null);
+                dlLog.setAction("PROJECT_DEADLINE_CHANGE");
+                dlLog.setDescription("Project '" + project.getName() + "' deadline changed to " + project.getDeadline());
+                logDAO.create(dlLog);
+
+                if (project.getManagerId() != null) {
+                    sendNotification(project.getManagerId(), "Project '" + project.getName() + "' deadline changed to " + project.getDeadline());
+                }
             }
+        } else {
+            ActivityLog audit = new ActivityLog();
+            audit.setUserId(currentUser != null ? currentUser.getId() : null);
+            audit.setAction("PROJECT_UPDATE");
+            audit.setDescription("Updated project: " + project.getName());
+            logDAO.create(audit);
         }
     }
 

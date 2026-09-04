@@ -30,15 +30,29 @@ public class ServiceLayerTest {
         private final Map<Integer, User> users = new HashMap<>();
         private int idSequence = 1;
 
+        private User copy(User u) {
+            if (u == null) return null;
+            User c = new User();
+            c.setId(u.getId());
+            c.setUsername(u.getUsername());
+            c.setPasswordHash(u.getPasswordHash());
+            c.setFullName(u.getFullName());
+            c.setEmail(u.getEmail());
+            c.setRole(u.getRole());
+            c.setCreatedAt(u.getCreatedAt());
+            return c;
+        }
+
         @Override
         public Optional<User> findById(int id) {
-            return Optional.ofNullable(users.get(id));
+            return Optional.ofNullable(copy(users.get(id)));
         }
 
         @Override
         public Optional<User> findByUsername(String username) {
             return users.values().stream()
                     .filter(u -> u.getUsername().equalsIgnoreCase(username))
+                    .map(this::copy)
                     .findFirst();
         }
 
@@ -46,24 +60,27 @@ public class ServiceLayerTest {
         public Optional<User> findByEmail(String email) {
             return users.values().stream()
                     .filter(u -> u.getEmail().equalsIgnoreCase(email))
+                    .map(this::copy)
                     .findFirst();
         }
 
         @Override
         public List<User> findAll() {
-            return new ArrayList<>(users.values());
+            List<User> list = new ArrayList<>();
+            for (User u : users.values()) list.add(copy(u));
+            return list;
         }
 
         @Override
         public User create(User user) {
             user.setId(idSequence++);
-            users.put(user.getId(), user);
-            return user;
+            users.put(user.getId(), copy(user));
+            return copy(user);
         }
 
         @Override
         public void update(User user) {
-            users.put(user.getId(), user);
+            users.put(user.getId(), copy(user));
         }
 
         @Override
@@ -1151,5 +1168,118 @@ public class ServiceLayerTest {
         // Re-running deadline check should NOT duplicate unread notifications
         int generatedAgain = notifService.checkAndGenerateDeadlineNotifications(LocalDate.now());
         assertEquals(0, generatedAgain);
+    }
+
+    @Test
+    public void testActivityTimelineTrackingAndRoleVisibility() throws Exception {
+        InMemoryUserDAO uDAO = new InMemoryUserDAO();
+        InMemoryProjectDAO pDAO = new InMemoryProjectDAO();
+        InMemoryTaskDAO tDAO = new InMemoryTaskDAO();
+        InMemoryNotificationDAO nDAO = new InMemoryNotificationDAO();
+        InMemoryActivityLogDAO lDAO = new InMemoryActivityLogDAO();
+
+        UserService uService = new UserServiceImpl(uDAO, lDAO, pDAO, tDAO);
+        ProjectService pService = new ProjectServiceImpl(pDAO, lDAO, nDAO);
+        TaskService tService = new TaskServiceImpl(tDAO, pDAO, uDAO, nDAO, lDAO);
+
+        User admin = uDAO.create(new User(0, "admin", "admin@test.com", "hash", Role.ADMIN, "Abhay", LocalDateTime.now()));
+        User manager1 = uDAO.create(new User(0, "manager1", "mgr1@test.com", "hash", Role.MANAGER, "Rahul", LocalDateTime.now()));
+        User employee1 = uDAO.create(new User(0, "emp1", "emp1@test.com", "hash", Role.EMPLOYEE, "Harsha", LocalDateTime.now()));
+        User otherManager = uDAO.create(new User(0, "manager2", "mgr2@test.com", "hash", Role.MANAGER, "Other Mgr", LocalDateTime.now()));
+
+        // 1. User Creation & Role Change
+        UserSession.getInstance().startSession(admin);
+        User newDev = new User(0, "dev1", "dev1@test.com", "", Role.EMPLOYEE, "Dev One", LocalDateTime.now());
+        User createdDev = uService.register(newDev, "Pass123!@#");
+
+        List<ActivityLog> allLogs = lDAO.findAll();
+        assertTrue(allLogs.stream().anyMatch(l -> "USER_CREATE".equals(l.getAction()) && l.getDescription().contains("created user dev1")));
+        // Verify password is never logged
+        assertFalse(allLogs.stream().anyMatch(l -> l.getDescription().contains("Pass123!@#")));
+
+        // Role change
+        createdDev.setRole(Role.MANAGER);
+        uService.updateUser(createdDev);
+        allLogs = lDAO.findAll();
+        assertTrue(allLogs.stream().anyMatch(l -> "USER_ROLE_CHANGE".equals(l.getAction()) && l.getDescription().contains("role changed from EMPLOYEE to MANAGER")));
+
+        // 2. Project Creation, Status & Deadline Change
+        UserSession.getInstance().startSession(admin);
+        Project project = new Project();
+        project.setName("IntelliFlow");
+        project.setStartDate(LocalDate.now());
+        project.setDeadline(LocalDate.now().plusDays(20));
+        project.setStatus(ProjectStatus.ACTIVE);
+        project.setManagerId(manager1.getId());
+        Project createdProj = pService.createProject(project);
+
+        allLogs = lDAO.findAll();
+        assertTrue(allLogs.stream().anyMatch(l -> "PROJECT_CREATE".equals(l.getAction()) && l.getDescription().contains("Abhay created project IntelliFlow")));
+
+        // Project deadline change
+        createdProj.setDeadline(LocalDate.now().plusDays(40));
+        pService.updateProject(createdProj);
+        allLogs = lDAO.findAll();
+        assertTrue(allLogs.stream().anyMatch(l -> "PROJECT_DEADLINE_CHANGE".equals(l.getAction()) && l.getDescription().contains("deadline changed to")));
+
+        // Project status change
+        createdProj.setStatus(ProjectStatus.COMPLETED);
+        pService.updateProject(createdProj);
+        allLogs = lDAO.findAll();
+        assertTrue(allLogs.stream().anyMatch(l -> "PROJECT_STATUS_CHANGE".equals(l.getAction()) && l.getDescription().contains("status changed ACTIVE → COMPLETED")));
+
+        // 3. Task Creation, Assignment, Priority, Deadline & Status Change
+        UserSession.getInstance().startSession(manager1);
+        Task task = new Task();
+        task.setProjectId(createdProj.getId());
+        task.setName("Login Module");
+        task.setPriority(TaskPriority.HIGH);
+        task.setStatus(TaskStatus.TO_DO);
+        task.setDeadline(LocalDate.now().plusDays(10));
+        task.setAssignedEmployeeId(employee1.getId());
+        Task createdTask = tService.createTask(task);
+
+        allLogs = lDAO.findAll();
+        assertTrue(allLogs.stream().anyMatch(l -> "TASK_CREATE".equals(l.getAction()) && l.getDescription().contains("Rahul created task Login Module")));
+        assertTrue(allLogs.stream().anyMatch(l -> "TASK_ASSIGN".equals(l.getAction()) && l.getDescription().contains("Login Module' assigned to Harsha")));
+
+        // Task priority change
+        createdTask.setPriority(TaskPriority.CRITICAL);
+        tService.updateTask(createdTask);
+        allLogs = lDAO.findAll();
+        assertTrue(allLogs.stream().anyMatch(l -> "TASK_PRIORITY_CHANGE".equals(l.getAction()) && l.getDescription().contains("Login Module priority changed HIGH → CRITICAL")));
+
+        // Task deadline change
+        createdTask.setDeadline(LocalDate.now().plusDays(15));
+        tService.updateTask(createdTask);
+        allLogs = lDAO.findAll();
+        assertTrue(allLogs.stream().anyMatch(l -> "TASK_DEADLINE_CHANGE".equals(l.getAction()) && l.getDescription().contains("Login Module deadline changed to")));
+
+        // Task status change (moved to TESTING)
+        UserSession.getInstance().startSession(employee1);
+        tService.updateTaskStatus(createdTask.getId(), TaskStatus.IN_PROGRESS);
+        tService.updateTaskStatus(createdTask.getId(), TaskStatus.TESTING);
+        allLogs = lDAO.findAll();
+        assertTrue(allLogs.stream().anyMatch(l -> "TASK_STATUS_CHANGE".equals(l.getAction()) && l.getDescription().contains("Login Module moved to TESTING")));
+
+        // 4. Role-based Visibility Verification
+        // Admin sees all activity logs
+        List<ActivityLog> adminVisibleLogs = uService.getActivityLogsForUser(admin);
+        assertEquals(allLogs.size(), adminVisibleLogs.size());
+
+        // Manager 1 sees activity for IntelliFlow and Login Module
+        List<ActivityLog> mgr1Logs = uService.getActivityLogsForUser(manager1);
+        assertTrue(mgr1Logs.size() > 0);
+        assertTrue(mgr1Logs.stream().anyMatch(l -> l.getDescription().contains("IntelliFlow")));
+        assertTrue(mgr1Logs.stream().anyMatch(l -> l.getDescription().contains("Login Module")));
+
+        // Other manager (with no projects) should NOT see Manager 1's project activity
+        List<ActivityLog> otherMgrLogs = uService.getActivityLogsForUser(otherManager);
+        assertFalse(otherMgrLogs.stream().anyMatch(l -> l.getDescription().contains("IntelliFlow")));
+        assertFalse(otherMgrLogs.stream().anyMatch(l -> l.getDescription().contains("Login Module")));
+
+        // Employee 1 sees activity for their assigned task (Login Module)
+        List<ActivityLog> emp1Logs = uService.getActivityLogsForUser(employee1);
+        assertTrue(emp1Logs.stream().anyMatch(l -> l.getDescription().contains("Login Module")));
     }
 }

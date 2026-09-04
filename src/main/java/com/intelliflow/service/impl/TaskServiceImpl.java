@@ -56,15 +56,23 @@ public class TaskServiceImpl implements TaskService {
 
         // Audit Log
         User currentUser = UserSession.getInstance().getCurrentUser();
+        String actor = currentUser != null ? currentUser.getFullName() : "System";
         ActivityLog audit = new ActivityLog();
         audit.setUserId(currentUser != null ? currentUser.getId() : null);
         audit.setAction("TASK_CREATE");
-        audit.setDescription("Created task: " + created.getName() + " (ID: " + created.getId() + ")");
+        audit.setDescription(actor + " created task " + created.getName());
         logDAO.create(audit);
 
-        // Assign Notification
+        // Assign Notification & Log
         if (created.getAssignedEmployeeId() != null) {
             sendNotification(created.getAssignedEmployeeId(), "You have been assigned to new task: " + created.getName() + " (Priority: " + created.getPriority() + ")");
+            Optional<User> assigneeOpt = userDAO.findById(created.getAssignedEmployeeId());
+            String assigneeName = assigneeOpt.map(User::getFullName).orElse("Employee #" + created.getAssignedEmployeeId());
+            ActivityLog assignLog = new ActivityLog();
+            assignLog.setUserId(currentUser != null ? currentUser.getId() : null);
+            assignLog.setAction("TASK_ASSIGN");
+            assignLog.setDescription("Task '" + created.getName() + "' assigned to " + assigneeName);
+            logDAO.create(assignLog);
         }
 
         return created;
@@ -75,7 +83,7 @@ public class TaskServiceImpl implements TaskService {
         checkManagerOrAdmin();
         validateTaskDetails(task);
 
-        // Fetch original to check for assignment change
+        // Fetch original to check for changes
         Optional<Task> originalOpt = taskDAO.findById(task.getId());
         if (originalOpt.isEmpty()) {
             throw new ValidationException("Task not found with ID: " + task.getId());
@@ -84,22 +92,29 @@ public class TaskServiceImpl implements TaskService {
 
         taskDAO.update(task);
 
-        // Audit Log
         User currentUser = UserSession.getInstance().getCurrentUser();
-        ActivityLog audit = new ActivityLog();
-        audit.setUserId(currentUser != null ? currentUser.getId() : null);
-        audit.setAction("TASK_UPDATE");
-        audit.setDescription("Updated task: " + task.getName() + " (ID: " + task.getId() + ")");
-        logDAO.create(audit);
 
-        // 1. If assignment changed, notify the new assignee
+        // 1. If assignment changed
         if (task.getAssignedEmployeeId() != null && 
             !task.getAssignedEmployeeId().equals(original.getAssignedEmployeeId())) {
             sendNotification(task.getAssignedEmployeeId(), "You have been assigned to task: " + task.getName() + " (Priority: " + task.getPriority() + ")");
+            Optional<User> assigneeOpt = userDAO.findById(task.getAssignedEmployeeId());
+            String assigneeName = assigneeOpt.map(User::getFullName).orElse("Employee #" + task.getAssignedEmployeeId());
+            ActivityLog assignLog = new ActivityLog();
+            assignLog.setUserId(currentUser != null ? currentUser.getId() : null);
+            assignLog.setAction("TASK_ASSIGN");
+            assignLog.setDescription("Task '" + task.getName() + "' assigned to " + assigneeName);
+            logDAO.create(assignLog);
         }
 
-        // 2. If priority changed, notify assigned employee and project manager
+        // 2. If priority changed
         if (task.getPriority() != original.getPriority()) {
+            ActivityLog prioLog = new ActivityLog();
+            prioLog.setUserId(currentUser != null ? currentUser.getId() : null);
+            prioLog.setAction("TASK_PRIORITY_CHANGE");
+            prioLog.setDescription(task.getName() + " priority changed " + original.getPriority() + " → " + task.getPriority());
+            logDAO.create(prioLog);
+
             if (task.getAssignedEmployeeId() != null) {
                 sendNotification(task.getAssignedEmployeeId(), "Task '" + task.getName() + "' priority changed from " + original.getPriority() + " to " + task.getPriority());
             }
@@ -110,8 +125,23 @@ public class TaskServiceImpl implements TaskService {
             }
         }
 
-        // 3. If status changed, notify assignee
+        // 3. If deadline changed
+        if (task.getDeadline() != null && !task.getDeadline().equals(original.getDeadline())) {
+            ActivityLog dlLog = new ActivityLog();
+            dlLog.setUserId(currentUser != null ? currentUser.getId() : null);
+            dlLog.setAction("TASK_DEADLINE_CHANGE");
+            dlLog.setDescription(task.getName() + " deadline changed to " + task.getDeadline());
+            logDAO.create(dlLog);
+        }
+
+        // 4. If status changed
         if (task.getStatus() != original.getStatus()) {
+            ActivityLog statusLog = new ActivityLog();
+            statusLog.setUserId(currentUser != null ? currentUser.getId() : null);
+            statusLog.setAction("TASK_STATUS_CHANGE");
+            statusLog.setDescription(task.getName() + " moved to " + task.getStatus());
+            logDAO.create(statusLog);
+
             if (task.getAssignedEmployeeId() != null && (currentUser == null || task.getAssignedEmployeeId() != currentUser.getId())) {
                 sendNotification(task.getAssignedEmployeeId(), "Task '" + task.getName() + "' status changed from " + original.getStatus() + " to " + task.getStatus());
             }
@@ -155,7 +185,7 @@ public class TaskServiceImpl implements TaskService {
         ActivityLog audit = new ActivityLog();
         audit.setUserId(currentUser.getId());
         audit.setAction("TASK_STATUS_CHANGE");
-        audit.setDescription("Task '" + task.getName() + "' status changed from " + oldStatus + " to " + newStatus);
+        audit.setDescription(task.getName() + " moved to " + newStatus);
         logDAO.create(audit);
 
         // Notify Project Manager of change (if manager is not the user changing it)

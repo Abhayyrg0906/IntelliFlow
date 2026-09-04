@@ -238,7 +238,7 @@ public class MainFrame extends JFrame {
             Role role = currentUser.getRole();
 
             // Enforce role-based routing checks
-            if (("users".equals(viewName) || "logs".equals(viewName)) && role != Role.ADMIN) {
+            if ("users".equals(viewName) && role != Role.ADMIN) {
                 JOptionPane.showMessageDialog(this, "Access Denied: Only System Administrators can access this screen.", "Unauthorized Access", JOptionPane.ERROR_MESSAGE);
                 showView("dashboard");
                 return;
@@ -296,7 +296,7 @@ public class MainFrame extends JFrame {
             case "notifications" -> headerTitleLabel.setText("🔔 Notifications Drawer");
             case "reports" -> headerTitleLabel.setText("📈 Performance & Reports");
             case "users" -> headerTitleLabel.setText("👥 User Management Directory");
-            case "logs" -> headerTitleLabel.setText("⚙️ System Activity Audits");
+            case "logs" -> headerTitleLabel.setText("📜 Activity Timeline & Audits");
             case "profile" -> headerTitleLabel.setText("👤 User Settings & Profile");
         }
     }
@@ -306,11 +306,9 @@ public class MainFrame extends JFrame {
         if (currentUser == null) return;
 
         Role role = currentUser.getRole();
-        // Hide Admin elements from Managers/Employees
+        // Hide Admin-only User Directory from Managers/Employees
         boolean isAdmin = (role == Role.ADMIN);
-
         sidebarButtons.get("users").setVisible(isAdmin);
-        sidebarButtons.get("logs").setVisible(isAdmin);
 
         // Hide Reports panel from standard Employees
         boolean canSeeReports = (role == Role.ADMIN || role == Role.MANAGER);
