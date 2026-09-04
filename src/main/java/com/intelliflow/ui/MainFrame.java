@@ -94,6 +94,7 @@ public class MainFrame extends JFrame {
         viewInstances.put("dashboard", new DashboardView(this));
         viewInstances.put("projects", new ProjectManagementView(this));
         viewInstances.put("tasks", new TaskManagementView(this));
+        viewInstances.put("deadlines", new DeadlinesView(this));
         viewInstances.put("notifications", new NotificationsView(this));
         viewInstances.put("reports", new ReportsView(this));
         viewInstances.put("users", new UserManagementView(this));
@@ -136,6 +137,7 @@ public class MainFrame extends JFrame {
         createNavigationItem(sidebar, "📊 Dashboard", "dashboard");
         createNavigationItem(sidebar, "📂 Projects", "projects");
         createNavigationItem(sidebar, "📝 Tasks", "tasks");
+        createNavigationItem(sidebar, "📅 Deadlines", "deadlines");
         createNavigationItem(sidebar, "🔔 Notifications", "notifications");
         createNavigationItem(sidebar, "📈 Reports", "reports");
         createNavigationItem(sidebar, "👥 Users", "users");
@@ -295,6 +297,7 @@ public class MainFrame extends JFrame {
             case "dashboard" -> headerTitleLabel.setText("📊 Dashboard Overview");
             case "projects" -> headerTitleLabel.setText("📂 Projects Board");
             case "tasks" -> headerTitleLabel.setText("📝 Task Board");
+            case "deadlines" -> headerTitleLabel.setText("📅 Upcoming Deadlines & Schedule");
             case "notifications" -> headerTitleLabel.setText("🔔 Notifications Drawer");
             case "reports" -> headerTitleLabel.setText("📈 Performance & Reports");
             case "users" -> headerTitleLabel.setText("👥 User Management Directory");

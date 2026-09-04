@@ -1893,6 +1893,94 @@ public class ServiceLayerTest {
         // Priya cannot delete Rahul's comment
         assertThrows(UnauthorizedException.class, () -> cService.deleteComment(c1.getId()));
     }
+
+    @Test
+    public void testDeadlineTimelineAndUpcomingGrouping() {
+        LocalDate today = LocalDate.of(2026, 9, 5);
+        LocalDate tomorrow = today.plusDays(1);
+        LocalDate futureDate1 = today.plusDays(5); // Sep 10
+        LocalDate futureDate2 = today.plusDays(10); // Sep 15
+        LocalDate pastDate = today.minusDays(4); // Sep 01
+
+        // 1. Setup sample tasks
+        Task tOverdueCrit = new Task(1, 1, "Critical Overdue", "", 1, TaskPriority.CRITICAL, pastDate, TaskStatus.IN_PROGRESS, LocalDateTime.now(), LocalDateTime.now());
+        Task tOverdueLow = new Task(2, 1, "Low Overdue", "", 1, TaskPriority.LOW, pastDate, TaskStatus.TO_DO, LocalDateTime.now(), LocalDateTime.now());
+        Task tCompletedOld = new Task(3, 1, "Completed Old Task", "", 1, TaskPriority.HIGH, pastDate, TaskStatus.COMPLETED, LocalDateTime.now(), LocalDateTime.now());
+
+        Task tTodayCrit = new Task(4, 1, "Login Module", "", 1, TaskPriority.CRITICAL, today, TaskStatus.IN_PROGRESS, LocalDateTime.now(), LocalDateTime.now());
+        Task tTodayMedium = new Task(5, 1, "Fix Header", "", 1, TaskPriority.MEDIUM, today, TaskStatus.TO_DO, LocalDateTime.now(), LocalDateTime.now());
+
+        Task tTomorrowHigh = new Task(6, 1, "Database Module", "", 1, TaskPriority.HIGH, tomorrow, TaskStatus.TO_DO, LocalDateTime.now(), LocalDateTime.now());
+
+        Task tFuture1 = new Task(7, 1, "Reports", "", 1, TaskPriority.MEDIUM, futureDate1, TaskStatus.TO_DO, LocalDateTime.now(), LocalDateTime.now());
+        Task tFuture2 = new Task(8, 1, "Deploy Module", "", 1, TaskPriority.HIGH, futureDate2, TaskStatus.TO_DO, LocalDateTime.now(), LocalDateTime.now());
+
+        Task tNoDeadline = new Task(9, 1, "Unscheduled Backlog", "", 1, TaskPriority.LOW, null, TaskStatus.TO_DO, LocalDateTime.now(), LocalDateTime.now());
+
+        // List with deliberate duplicate of task 4 (Login Module)
+        List<Task> allTasks = List.of(
+                tOverdueLow, tOverdueCrit, tCompletedOld,
+                tTodayMedium, tTodayCrit, tTodayCrit, // duplicate
+                tTomorrowHigh,
+                tFuture2, tFuture1,
+                tNoDeadline
+        );
+
+        // 2. Execute Grouping
+        List<com.intelliflow.util.DeadlineTimelineUtil.DeadlineSection> sections =
+                com.intelliflow.util.DeadlineTimelineUtil.groupTasksByDeadline(allTasks, today);
+
+        assertNotNull(sections);
+        assertFalse(sections.isEmpty());
+
+        // 3. Verify Sections structure
+        // Section 0: Overdue Tasks (only active overdue tasks, completed excluded from overdue alert)
+        var overdueSec = sections.stream().filter(com.intelliflow.util.DeadlineTimelineUtil.DeadlineSection::isOverdue).findFirst().orElseThrow();
+        assertEquals("⛔ Overdue Tasks", overdueSec.getTitle());
+        assertEquals(2, overdueSec.getTasks().size());
+        // Verify Priority sorting: CRITICAL before LOW
+        assertEquals("Critical Overdue", overdueSec.getTasks().get(0).getName());
+        assertEquals("Low Overdue", overdueSec.getTasks().get(1).getName());
+
+        // Section: Today
+        var todaySec = sections.stream().filter(com.intelliflow.util.DeadlineTimelineUtil.DeadlineSection::isToday).findFirst().orElseThrow();
+        assertEquals("Today", todaySec.getTitle());
+        assertEquals("🔥", todaySec.getBadge());
+        // Deduplication check: task 4 only appears once -> total 2 tasks (Login Module & Fix Header)
+        assertEquals(2, todaySec.getTasks().size());
+        // Priority sorting: CRITICAL before MEDIUM
+        assertEquals("Login Module", todaySec.getTasks().get(0).getName());
+        assertEquals("Fix Header", todaySec.getTasks().get(1).getName());
+
+        // Section: Tomorrow
+        var tomorrowSec = sections.stream().filter(com.intelliflow.util.DeadlineTimelineUtil.DeadlineSection::isTomorrow).findFirst().orElseThrow();
+        assertEquals("Tomorrow", tomorrowSec.getTitle());
+        assertEquals("⚠️", tomorrowSec.getBadge());
+        assertEquals(1, tomorrowSec.getTasks().size());
+        assertEquals("Database Module", tomorrowSec.getTasks().get(0).getName());
+
+        // Section: Future Date 1 (Sep 10)
+        var future1Sec = sections.stream().filter(s -> futureDate1.equals(s.getDate())).findFirst().orElseThrow();
+        assertEquals("Sep 10", future1Sec.getTitle());
+        assertEquals("📅", future1Sec.getBadge());
+        assertEquals("Reports", future1Sec.getTasks().get(0).getName());
+
+        // Section: Future Date 2 (Sep 15)
+        var future2Sec = sections.stream().filter(s -> futureDate2.equals(s.getDate())).findFirst().orElseThrow();
+        assertEquals("Sep 15", future2Sec.getTitle());
+        assertEquals("Deploy Module", future2Sec.getTasks().get(0).getName());
+
+        // Section: No Deadline
+        var noDlSec = sections.stream().filter(s -> s.getDate() == null && !s.isOverdue()).findFirst().orElseThrow();
+        assertEquals("📋 No Deadline", noDlSec.getTitle());
+        assertEquals(1, noDlSec.getTasks().size());
+        assertEquals("Unscheduled Backlog", noDlSec.getTasks().get(0).getName());
+
+        // 4. Safe handling of empty and null lists
+        assertTrue(com.intelliflow.util.DeadlineTimelineUtil.groupTasksByDeadline(Collections.emptyList(), today).isEmpty());
+        assertTrue(com.intelliflow.util.DeadlineTimelineUtil.groupTasksByDeadline(null, today).isEmpty());
+    }
 }
+
 
 
