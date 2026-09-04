@@ -6,6 +6,7 @@ import com.intelliflow.enums.TaskStatus;
 import com.intelliflow.enums.ProjectStatus;
 import com.intelliflow.enums.ProjectHealth;
 import com.intelliflow.util.ProjectHealthUtil;
+import com.intelliflow.util.AlertUtil;
 import com.intelliflow.model.*;
 import com.intelliflow.ui.MainFrame;
 import com.intelliflow.ui.ThemeManager;
@@ -80,6 +81,11 @@ public class DashboardView extends BaseView {
     private DefaultTableModel employeeUpcomingModel;
     private DefaultTableModel employeeCompletedModel;
 
+    // --- Smart Alerts Panels ---
+    private JPanel adminAlertsPanel;
+    private JPanel managerAlertsPanel;
+    private JPanel employeeAlertsPanel;
+
     public DashboardView(MainFrame mainFrame) {
         this.mainFrame = mainFrame;
         setLayout(new BorderLayout());
@@ -139,6 +145,11 @@ public class DashboardView extends BaseView {
         JPanel contentPanel = new JPanel();
         contentPanel.setOpaque(false);
         contentPanel.setLayout(new BoxLayout(contentPanel, BoxLayout.Y_AXIS));
+
+        // Attention & Smart Alerts
+        adminAlertsPanel = createAlertsContainer();
+        contentPanel.add(adminAlertsPanel);
+        contentPanel.add(Box.createVerticalStrut(20));
 
         // KPI Cards Grid (2 rows, 3 columns)
         JPanel kpiGrid = new JPanel(new GridLayout(2, 3, 20, 20));
@@ -262,6 +273,11 @@ public class DashboardView extends BaseView {
         JPanel contentPanel = new JPanel();
         contentPanel.setOpaque(false);
         contentPanel.setLayout(new BoxLayout(contentPanel, BoxLayout.Y_AXIS));
+
+        // Attention & Smart Alerts
+        managerAlertsPanel = createAlertsContainer();
+        contentPanel.add(managerAlertsPanel);
+        contentPanel.add(Box.createVerticalStrut(20));
 
         // KPI Cards Grid (1 row, 4 columns)
         JPanel kpiGrid = new JPanel(new GridLayout(1, 4, 20, 0));
@@ -405,6 +421,11 @@ public class DashboardView extends BaseView {
         contentPanel.setOpaque(false);
         contentPanel.setLayout(new BoxLayout(contentPanel, BoxLayout.Y_AXIS));
 
+        // Attention & Smart Alerts
+        employeeAlertsPanel = createAlertsContainer();
+        contentPanel.add(employeeAlertsPanel);
+        contentPanel.add(Box.createVerticalStrut(20));
+
         // KPI Cards Grid (1 row, 4 columns)
         JPanel kpiGrid = new JPanel(new GridLayout(1, 4, 20, 0));
         kpiGrid.setOpaque(false);
@@ -528,6 +549,7 @@ public class DashboardView extends BaseView {
             // Shared caches
             private final Map<Integer, String> userNames = new HashMap<>();
             private final Map<Integer, String> projectNames = new HashMap<>();
+            private List<AlertUtil.SmartAlert> generatedAlerts;
 
             // Admin data
             private int adminUsers, adminManagers, adminEmployees, adminProjects, adminActiveTasks, adminCompletedTasks;
@@ -555,6 +577,9 @@ public class DashboardView extends BaseView {
                     projectNames.put(p.getId(), p.getName());
                 }
 
+                List<Task> allTasks = mainFrame.getTaskService().getAllTasks();
+                generatedAlerts = AlertUtil.generateAlertsForUser(currentUser, allProjects, allTasks, LocalDate.now());
+
                 if (role == Role.ADMIN) {
                     // KPI Calculations
                     adminUsers = allUsers.size();
@@ -563,7 +588,6 @@ public class DashboardView extends BaseView {
                     
                     adminProjects = allProjects.size();
                     
-                    List<Task> allTasks = mainFrame.getTaskService().getAllTasks();
                     adminActiveTasks = (int) allTasks.stream().filter(t -> t.getStatus() != TaskStatus.COMPLETED).count();
                     adminCompletedTasks = (int) allTasks.stream().filter(t -> t.getStatus() == TaskStatus.COMPLETED).count();
 
@@ -610,7 +634,6 @@ public class DashboardView extends BaseView {
                     List<Project> managed = mainFrame.getProjectService().getProjectsManagedBy(currentUser.getId());
                     List<Integer> managedIds = managed.stream().map(Project::getId).collect(Collectors.toList());
                     
-                    List<Task> allTasks = mainFrame.getTaskService().getAllTasks();
                     List<Task> teamTasks = allTasks.stream().filter(t -> managedIds.contains(t.getProjectId())).collect(Collectors.toList());
 
                     mgrProjects = managed.size();
@@ -721,6 +744,7 @@ public class DashboardView extends BaseView {
                     get(); // Throws execution exceptions if query failed
 
                     if (role == Role.ADMIN) {
+                        updateAlertsDisplay(adminAlertsPanel, generatedAlerts);
                         // Admin KPIs
                         adminCardUsers.setValue(String.valueOf(adminUsers));
                         adminCardManagers.setValue(String.valueOf(adminManagers));
@@ -736,6 +760,7 @@ public class DashboardView extends BaseView {
                         populateTable(adminLogsModel, adminLogRows);
 
                     } else if (role == Role.MANAGER) {
+                        updateAlertsDisplay(managerAlertsPanel, generatedAlerts);
                         // Manager KPIs
                         managerCardProjects.setValue(String.valueOf(mgrProjects));
                         managerCardActiveProjects.setValue(String.valueOf(mgrActiveProjects));
@@ -755,6 +780,7 @@ public class DashboardView extends BaseView {
                         updateProgressBar(managerBlockedBar, managerBlockedVal, mgrBlocked, mgrTasks);
 
                     } else { // EMPLOYEE
+                        updateAlertsDisplay(employeeAlertsPanel, generatedAlerts);
                         // Employee KPIs
                         employeeCardAssigned.setValue(String.valueOf(empAssigned));
                         employeeCardTodo.setValue(String.valueOf(empTodo));
@@ -790,5 +816,38 @@ public class DashboardView extends BaseView {
         int percent = total > 0 ? (int) Math.round(((double) value / total) * 100) : 0;
         bar.setValue(percent);
         valLabel.setText(value + " (" + percent + "%)");
+    }
+
+    private JPanel createAlertsContainer() {
+        RoundedPanel p = new RoundedPanel(12, ThemeManager.COLOR_CARD);
+        p.setDrawBorder(true);
+        p.setBorderColor(ThemeManager.COLOR_BORDER);
+        p.setLayout(new FlowLayout(FlowLayout.LEFT, 15, 8));
+        p.setBorder(new EmptyBorder(6, 16, 6, 16));
+        return p;
+    }
+
+    private void updateAlertsDisplay(JPanel container, List<AlertUtil.SmartAlert> alerts) {
+        if (container == null) return;
+        container.removeAll();
+        if (alerts == null || alerts.isEmpty()) {
+            JLabel allGood = new JLabel("✨ All systems on track. No urgent alerts.");
+            allGood.setFont(ThemeManager.FONT_BOLD_SMALL);
+            allGood.setForeground(ThemeManager.COLOR_SUCCESS);
+            container.add(allGood);
+        } else {
+            JLabel header = new JLabel("⚠️ Smart Attention Alerts:");
+            header.setFont(ThemeManager.FONT_BOLD_SMALL);
+            header.setForeground(ThemeManager.COLOR_TEXT_PRIMARY);
+            container.add(header);
+
+            for (AlertUtil.SmartAlert alert : alerts) {
+                Color color = "DANGER".equals(alert.getSeverity()) ? ThemeManager.COLOR_DANGER : ThemeManager.COLOR_WARNING;
+                TaskManagementView.PillBadge badge = new TaskManagementView.PillBadge(alert.toString(), color, Color.WHITE, 6);
+                container.add(badge);
+            }
+        }
+        container.revalidate();
+        container.repaint();
     }
 }

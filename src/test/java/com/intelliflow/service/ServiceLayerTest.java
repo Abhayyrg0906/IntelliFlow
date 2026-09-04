@@ -907,4 +907,97 @@ public class ServiceLayerTest {
         assertEquals(com.intelliflow.enums.ProjectHealth.ON_TRACK,
                 com.intelliflow.util.ProjectHealthUtil.calculateProjectHealth(completedProject, List.of(task1, taskOverdue), today));
     }
+
+    @Test
+    public void testSmartTaskAlertsGenerationAndRoleFiltering() {
+        LocalDate today = LocalDate.of(2026, 9, 4);
+
+        User adminUser = new User();
+        adminUser.setId(1);
+        adminUser.setRole(Role.ADMIN);
+
+        User manager1 = new User();
+        manager1.setId(2);
+        manager1.setRole(Role.MANAGER);
+
+        User employee1 = new User();
+        employee1.setId(3);
+        employee1.setRole(Role.EMPLOYEE);
+
+        User employee2 = new User();
+        employee2.setId(4);
+        employee2.setRole(Role.EMPLOYEE);
+
+        Project projectManaged = new Project();
+        projectManaged.setId(10);
+        projectManaged.setName("Project Alpha");
+        projectManaged.setManagerId(manager1.getId());
+        projectManaged.setDeadline(today.plusDays(20));
+        projectManaged.setStatus(ProjectStatus.ACTIVE);
+
+        Project projectOther = new Project();
+        projectOther.setId(20);
+        projectOther.setName("Project Beta");
+        projectOther.setManagerId(99); // Other manager
+        projectOther.setDeadline(today.plusDays(20));
+        projectOther.setStatus(ProjectStatus.ACTIVE);
+
+        // Task 1: Assigned to Employee 1 (overdue)
+        Task task1 = new Task();
+        task1.setId(101);
+        task1.setProjectId(projectManaged.getId());
+        task1.setAssignedEmployeeId(employee1.getId());
+        task1.setPriority(TaskPriority.HIGH);
+        task1.setDeadline(today.minusDays(2)); // Overdue
+        task1.setStatus(TaskStatus.IN_PROGRESS);
+
+        // Task 2: Assigned to Employee 2 in other project (critical due today)
+        Task task2 = new Task();
+        task2.setId(102);
+        task2.setProjectId(projectOther.getId());
+        task2.setAssignedEmployeeId(employee2.getId());
+        task2.setPriority(TaskPriority.CRITICAL);
+        task2.setDeadline(today); // Due today
+        task2.setStatus(TaskStatus.TO_DO);
+
+        // Task 3: Assigned to Employee 2 in other project (medium due tomorrow -> due soon)
+        Task task3 = new Task();
+        task3.setId(103);
+        task3.setProjectId(projectOther.getId());
+        task3.setAssignedEmployeeId(employee2.getId());
+        task3.setPriority(TaskPriority.MEDIUM);
+        task3.setDeadline(today.plusDays(1)); // Due soon
+        task3.setStatus(TaskStatus.TO_DO);
+
+        List<Project> allProjects = List.of(projectManaged, projectOther);
+        List<Task> allTasks = List.of(task1, task2, task3);
+
+        // 1. Admin should see all alerts (overdue task + critical due today + due soon + delayed projectAlpha)
+        List<com.intelliflow.util.AlertUtil.SmartAlert> adminAlerts = 
+                com.intelliflow.util.AlertUtil.generateAlertsForUser(adminUser, allProjects, allTasks, today);
+        assertTrue(adminAlerts.stream().anyMatch(a -> a.getMessage().contains("overdue task")));
+        assertTrue(adminAlerts.stream().anyMatch(a -> a.getMessage().contains("due today")));
+        assertTrue(adminAlerts.stream().anyMatch(a -> a.getMessage().contains("due soon")));
+
+        // 2. Manager 1 should only see alerts for Project Alpha (task 1 overdue), NOT task 2 & 3 (Project Beta)
+        List<com.intelliflow.util.AlertUtil.SmartAlert> managerAlerts = 
+                com.intelliflow.util.AlertUtil.generateAlertsForUser(manager1, allProjects, allTasks, today);
+        assertTrue(managerAlerts.stream().anyMatch(a -> a.getMessage().contains("overdue task")));
+        assertFalse(managerAlerts.stream().anyMatch(a -> a.getMessage().contains("due today")));
+        assertFalse(managerAlerts.stream().anyMatch(a -> a.getMessage().contains("due soon")));
+
+        // 3. Employee 1 should only see alerts for their assigned task (task 1 overdue), NOT task 2 & 3
+        List<com.intelliflow.util.AlertUtil.SmartAlert> emp1Alerts = 
+                com.intelliflow.util.AlertUtil.generateAlertsForUser(employee1, allProjects, allTasks, today);
+        assertEquals(1, emp1Alerts.size());
+        assertTrue(emp1Alerts.get(0).getMessage().contains("overdue task"));
+
+        // 4. Employee 2 should only see alerts for their assigned tasks (task 2 critical due today + task 3 due soon), NOT task 1
+        List<com.intelliflow.util.AlertUtil.SmartAlert> emp2Alerts = 
+                com.intelliflow.util.AlertUtil.generateAlertsForUser(employee2, allProjects, allTasks, today);
+        assertEquals(2, emp2Alerts.size()); // critical due today + due soon
+        assertTrue(emp2Alerts.stream().anyMatch(a -> a.getMessage().contains("due today")));
+        assertTrue(emp2Alerts.stream().anyMatch(a -> a.getMessage().contains("due soon")));
+        assertFalse(emp2Alerts.stream().anyMatch(a -> a.getMessage().contains("overdue task")));
+    }
 }
