@@ -26,6 +26,7 @@ public class MainFrame extends JFrame {
     private final TaskService taskService;
     private final NotificationService notificationService;
     private final ReportService reportService;
+    private final CommentService commentService;
 
     // UI Layout Components
     private CardLayout cardLayout;
@@ -52,6 +53,7 @@ public class MainFrame extends JFrame {
         this.taskService = new TaskServiceImpl();
         this.notificationService = new NotificationServiceImpl();
         this.reportService = new ReportServiceImpl();
+        this.commentService = new CommentServiceImpl();
 
         // Bootstrap default users on database if they don't exist
         try {
@@ -350,6 +352,7 @@ public class MainFrame extends JFrame {
     public TaskService getTaskService() { return taskService; }
     public NotificationService getNotificationService() { return notificationService; }
     public ReportService getReportService() { return reportService; }
+    public CommentService getCommentService() { return commentService; }
 
     // Getter for view instances
     public BaseView getView(String viewName) {

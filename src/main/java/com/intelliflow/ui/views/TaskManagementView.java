@@ -1113,6 +1113,10 @@ public class TaskManagementView extends BaseView {
         JButton viewBtn = createCardActionButton("👁️", "View details", e -> showTaskDetails(t));
         actionsRow.add(viewBtn);
 
+        // 💬 Task comments & collaboration button
+        JButton commentBtn = createCardActionButton("💬", "Comments & Collaboration", e -> showTaskCommentsDialog(t));
+        actionsRow.add(commentBtn);
+
         if (isManagerOrAdmin) {
             // ✏️ Edit button
             JButton editBtn = createCardActionButton("✏️", "Edit task", e -> showTaskForm(t));
@@ -1511,20 +1515,20 @@ public class TaskManagementView extends BaseView {
         };
     }
 
-    private void showTaskDetails(Task task) {
-        JDialog dialog = new JDialog(mainFrame, "Task Details", true);
-        dialog.setSize(460, 480);
+    public void showTaskDetails(Task task) {
+        JDialog dialog = new JDialog(mainFrame, "Task Details & Summary", true);
+        dialog.setSize(480, 520);
         dialog.setLocationRelativeTo(this);
         dialog.setLayout(new BorderLayout());
         dialog.getContentPane().setBackground(ThemeManager.COLOR_BACKGROUND);
 
         JPanel contentPanel = new JPanel(new GridBagLayout());
         contentPanel.setOpaque(false);
-        contentPanel.setBorder(new EmptyBorder(25, 25, 25, 25));
+        contentPanel.setBorder(new EmptyBorder(20, 20, 20, 20));
 
         GridBagConstraints gbc = new GridBagConstraints();
         gbc.fill = GridBagConstraints.HORIZONTAL;
-        gbc.insets = new Insets(10, 0, 10, 0);
+        gbc.insets = new Insets(8, 0, 8, 0);
         gbc.weightx = 1.0;
         gbc.gridx = 0;
         gbc.gridy = 0;
@@ -1590,15 +1594,27 @@ public class TaskManagementView extends BaseView {
         descArea.setFocusable(true);
         
         JScrollPane descScroll = new JScrollPane(descArea);
-        descScroll.setPreferredSize(new Dimension(380, 100));
+        descScroll.setPreferredSize(new Dimension(380, 80));
         descScroll.setBorder(BorderFactory.createLineBorder(ThemeManager.COLOR_BORDER));
         contentPanel.add(descScroll, gbc);
 
         dialog.add(contentPanel, BorderLayout.CENTER);
 
         // Action Panel
-        JPanel actionPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 15, 15));
+        JPanel actionPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 12));
         actionPanel.setBackground(ThemeManager.COLOR_SIDEBAR);
+
+        // 💬 Open Comments & Collaboration Dialog
+        JButton openCommentsBtn = new JButton("💬 Comments & Collaboration");
+        openCommentsBtn.setBackground(ThemeManager.COLOR_PRIMARY);
+        openCommentsBtn.setForeground(ThemeManager.COLOR_TEXT_PRIMARY);
+        openCommentsBtn.setFont(ThemeManager.FONT_BOLD_SMALL);
+        openCommentsBtn.setCursor(new Cursor(Cursor.HAND_CURSOR));
+        openCommentsBtn.addActionListener(e -> {
+            dialog.dispose();
+            showTaskCommentsDialog(task);
+        });
+        actionPanel.add(openCommentsBtn);
         
         JButton closeBtn = new JButton("Close");
         closeBtn.setBackground(ThemeManager.COLOR_CARD);
@@ -1610,7 +1626,7 @@ public class TaskManagementView extends BaseView {
         User currentUser = UserSession.getInstance().getCurrentUser();
         if (currentUser != null && (currentUser.getRole() == Role.ADMIN || currentUser.getRole() == Role.MANAGER)) {
             JButton editBtn = new JButton("Edit Task");
-            editBtn.setBackground(ThemeManager.COLOR_PRIMARY);
+            editBtn.setBackground(ThemeManager.COLOR_CARD);
             editBtn.setForeground(ThemeManager.COLOR_TEXT_PRIMARY);
             editBtn.setFont(ThemeManager.FONT_BOLD_SMALL);
             editBtn.addActionListener(e -> {
@@ -1621,6 +1637,226 @@ public class TaskManagementView extends BaseView {
         }
 
         dialog.add(actionPanel, BorderLayout.SOUTH);
+        dialog.setVisible(true);
+    }
+
+    public void showTaskCommentsDialog(Task task) {
+        JDialog dialog = new JDialog(mainFrame, "Task Collaboration — " + task.getName(), true);
+        dialog.setSize(560, 640);
+        dialog.setLocationRelativeTo(this);
+        dialog.setLayout(new BorderLayout());
+        dialog.getContentPane().setBackground(ThemeManager.COLOR_BACKGROUND);
+
+        // Top Header
+        JPanel topHeader = new JPanel(new BorderLayout(10, 8));
+        topHeader.setBackground(ThemeManager.COLOR_CARD);
+        topHeader.setBorder(new EmptyBorder(14, 18, 14, 18));
+
+        JPanel taskInfoPanel = new JPanel();
+        taskInfoPanel.setLayout(new BoxLayout(taskInfoPanel, BoxLayout.Y_AXIS));
+        taskInfoPanel.setOpaque(false);
+
+        JLabel taskTitle = new JLabel("📝 " + task.getName());
+        taskTitle.setFont(ThemeManager.FONT_SUBTITLE);
+        taskTitle.setForeground(ThemeManager.COLOR_TEXT_PRIMARY);
+        taskInfoPanel.add(taskTitle);
+
+        taskInfoPanel.add(Box.createVerticalStrut(4));
+
+        String prjName = projectNamesMap.getOrDefault(task.getProjectId(), "Unassigned");
+        String empName = employeeNamesMap.getOrDefault(task.getAssignedEmployeeId(), "Unassigned");
+        JLabel metaLabel = new JLabel("Project: " + prjName + "   •   Assignee: " + empName);
+        metaLabel.setFont(ThemeManager.FONT_SMALL);
+        metaLabel.setForeground(ThemeManager.COLOR_TEXT_MUTED);
+        taskInfoPanel.add(metaLabel);
+
+        topHeader.add(taskInfoPanel, BorderLayout.WEST);
+
+        JPanel badgesPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
+        badgesPanel.setOpaque(false);
+        badgesPanel.add(new PillBadge(task.getPriority().toString(), getPriorityColor(task.getPriority()), Color.WHITE, 6));
+        badgesPanel.add(new PillBadge(task.getStatus().toString(), getStatusColor(task.getStatus()), Color.WHITE, 6));
+        topHeader.add(badgesPanel, BorderLayout.EAST);
+
+        dialog.add(topHeader, BorderLayout.NORTH);
+
+        // Center Comments Stream
+        JPanel commentsContainer = new JPanel();
+        commentsContainer.setLayout(new BoxLayout(commentsContainer, BoxLayout.Y_AXIS));
+        commentsContainer.setOpaque(false);
+        commentsContainer.setBorder(new EmptyBorder(12, 14, 12, 14));
+
+        JScrollPane scrollPane = new JScrollPane(commentsContainer);
+        scrollPane.setBorder(BorderFactory.createEmptyBorder());
+        scrollPane.setOpaque(false);
+        scrollPane.getViewport().setOpaque(false);
+        scrollPane.getVerticalScrollBar().setUnitIncrement(12);
+
+        dialog.add(scrollPane, BorderLayout.CENTER);
+
+        DateTimeFormatter timeFormatter = DateTimeFormatter.ofPattern("hh:mm a", Locale.US);
+        DateTimeFormatter fullFormatter = DateTimeFormatter.ofPattern("MMM dd, hh:mm a", Locale.US);
+        LocalDate today = LocalDate.now();
+
+        // Helper to load and render comments
+        Runnable loadComments = () -> {
+            SwingWorker<List<com.intelliflow.model.Comment>, Void> worker = new SwingWorker<>() {
+                @Override
+                protected List<com.intelliflow.model.Comment> doInBackground() throws Exception {
+                    return mainFrame.getCommentService().getCommentsByTaskId(task.getId());
+                }
+
+                @Override
+                protected void done() {
+                    try {
+                        List<com.intelliflow.model.Comment> list = get();
+                        commentsContainer.removeAll();
+
+                        if (list.isEmpty()) {
+                            JPanel emptyPanel = new JPanel(new GridBagLayout());
+                            emptyPanel.setOpaque(false);
+                            emptyPanel.setBorder(new EmptyBorder(40, 20, 40, 20));
+
+                            JLabel emptyLbl = new JLabel("💬 No comments yet. Post the first update or message below!");
+                            emptyLbl.setFont(ThemeManager.FONT_BODY);
+                            emptyLbl.setForeground(ThemeManager.COLOR_TEXT_MUTED);
+                            emptyPanel.add(emptyLbl);
+
+                            commentsContainer.add(emptyPanel);
+                        } else {
+                            for (com.intelliflow.model.Comment c : list) {
+                                RoundedPanel commentCard = new RoundedPanel(10, ThemeManager.COLOR_CARD);
+                                commentCard.setDrawBorder(true);
+                                commentCard.setBorderColor(ThemeManager.COLOR_BORDER);
+                                commentCard.setLayout(new BorderLayout(8, 6));
+                                commentCard.setBorder(new EmptyBorder(10, 12, 10, 12));
+
+                                // Header: User — Role & Timestamp
+                                JPanel headerRow = new JPanel(new BorderLayout(8, 0));
+                                headerRow.setOpaque(false);
+
+                                String author = c.getAuthorName() != null ? c.getAuthorName() : "User #" + c.getUserId();
+                                String roleStr = c.getAuthorRole() != null ? c.getAuthorRole().toString() : "EMPLOYEE";
+                                JLabel authorLabel = new JLabel(author + " — " + roleStr.substring(0, 1) + roleStr.substring(1).toLowerCase());
+                                authorLabel.setFont(ThemeManager.FONT_BOLD_SMALL);
+                                authorLabel.setForeground(ThemeManager.COLOR_TEXT_PRIMARY);
+                                headerRow.add(authorLabel, BorderLayout.WEST);
+
+                                String timeText = "";
+                                if (c.getCreatedAt() != null) {
+                                    if (c.getCreatedAt().toLocalDate().isEqual(today)) {
+                                        timeText = c.getCreatedAt().format(timeFormatter);
+                                    } else {
+                                        timeText = c.getCreatedAt().format(fullFormatter);
+                                    }
+                                }
+                                JLabel timeLabel = new JLabel(timeText);
+                                timeLabel.setFont(ThemeManager.FONT_SMALL);
+                                timeLabel.setForeground(ThemeManager.COLOR_TEXT_MUTED);
+                                headerRow.add(timeLabel, BorderLayout.EAST);
+
+                                commentCard.add(headerRow, BorderLayout.NORTH);
+
+                                // Comment Content
+                                JTextArea contentText = new JTextArea(c.getContent());
+                                contentText.setFont(ThemeManager.FONT_BODY);
+                                contentText.setForeground(ThemeManager.COLOR_TEXT_PRIMARY);
+                                contentText.setOpaque(false);
+                                contentText.setLineWrap(true);
+                                contentText.setWrapStyleWord(true);
+                                contentText.setEditable(false);
+                                contentText.setFocusable(false);
+                                commentCard.add(contentText, BorderLayout.CENTER);
+
+                                commentsContainer.add(commentCard);
+                                commentsContainer.add(Box.createVerticalStrut(10));
+                            }
+                        }
+
+                        commentsContainer.revalidate();
+                        commentsContainer.repaint();
+
+                        // Scroll to bottom
+                        SwingUtilities.invokeLater(() -> {
+                            JScrollBar vertical = scrollPane.getVerticalScrollBar();
+                            vertical.setValue(vertical.getMaximum());
+                        });
+
+                    } catch (Exception ex) {
+                        commentsContainer.removeAll();
+                        JLabel errLabel = new JLabel("Failed to load comments: " + ex.getMessage());
+                        errLabel.setForeground(ThemeManager.COLOR_DANGER);
+                        commentsContainer.add(errLabel);
+                        commentsContainer.revalidate();
+                        commentsContainer.repaint();
+                    }
+                }
+            };
+            worker.execute();
+        };
+
+        loadComments.run();
+
+        // Bottom Input Panel
+        JPanel inputPanel = new JPanel(new BorderLayout(8, 8));
+        inputPanel.setBackground(ThemeManager.COLOR_SIDEBAR);
+        inputPanel.setBorder(new EmptyBorder(12, 14, 12, 14));
+
+        JTextArea inputArea = new JTextArea(2, 25);
+        inputArea.setFont(ThemeManager.FONT_BODY);
+        inputArea.setLineWrap(true);
+        inputArea.setWrapStyleWord(true);
+        inputArea.putClientProperty("JTextField.placeholderText", "Write a comment or status update...");
+        
+        JScrollPane inputScroll = new JScrollPane(inputArea);
+        inputScroll.setBorder(BorderFactory.createLineBorder(ThemeManager.COLOR_BORDER));
+        inputPanel.add(inputScroll, BorderLayout.CENTER);
+
+        JButton postBtn = new JButton("💬 Post Comment");
+        postBtn.setBackground(ThemeManager.COLOR_PRIMARY);
+        postBtn.setForeground(ThemeManager.COLOR_TEXT_PRIMARY);
+        postBtn.setFont(ThemeManager.FONT_BOLD_SMALL);
+        postBtn.setCursor(new Cursor(Cursor.HAND_CURSOR));
+
+        postBtn.addActionListener(e -> {
+            String text = inputArea.getText().trim();
+            if (text.isEmpty()) {
+                JOptionPane.showMessageDialog(dialog, "Comment cannot be empty.", "Validation Error", JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+
+            postBtn.setEnabled(false);
+            SwingWorker<Void, Void> postWorker = new SwingWorker<>() {
+                @Override
+                protected Void doInBackground() throws Exception {
+                    mainFrame.getCommentService().addComment(task.getId(), text);
+                    return null;
+                }
+
+                @Override
+                protected void done() {
+                    postBtn.setEnabled(true);
+                    try {
+                        get();
+                        inputArea.setText("");
+                        loadComments.run();
+                        mainFrame.updateNotificationCount();
+                    } catch (Exception ex) {
+                        Throwable cause = ex;
+                        while (cause.getCause() != null) cause = cause.getCause();
+                        JOptionPane.showMessageDialog(dialog, cause.getMessage(), "Error Posting Comment", JOptionPane.ERROR_MESSAGE);
+                    }
+                }
+            };
+            postWorker.execute();
+        });
+
+        JPanel btnPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
+        btnPanel.setOpaque(false);
+        btnPanel.add(postBtn);
+        inputPanel.add(btnPanel, BorderLayout.EAST);
+
+        dialog.add(inputPanel, BorderLayout.SOUTH);
         dialog.setVisible(true);
     }
 

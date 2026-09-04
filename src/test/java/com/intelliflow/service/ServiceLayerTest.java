@@ -17,6 +17,7 @@ import org.junit.jupiter.api.Test;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.*;
+import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -305,6 +306,61 @@ public class ServiceLayerTest {
             log.setId(idSequence++);
             logs.add(log);
             return log;
+        }
+    }
+
+    private static class InMemoryCommentDAO implements CommentDAO {
+        private final Map<Integer, Comment> comments = new HashMap<>();
+        private int idSequence = 1;
+
+        private Comment copy(Comment c) {
+            if (c == null) return null;
+            Comment cp = new Comment();
+            cp.setId(c.getId());
+            cp.setTaskId(c.getTaskId());
+            cp.setUserId(c.getUserId());
+            cp.setContent(c.getContent());
+            cp.setCreatedAt(c.getCreatedAt());
+            cp.setAuthorName(c.getAuthorName());
+            cp.setAuthorRole(c.getAuthorRole());
+            return cp;
+        }
+
+        @Override
+        public Optional<Comment> findById(int id) {
+            return Optional.ofNullable(copy(comments.get(id)));
+        }
+
+        @Override
+        public List<Comment> findByTaskId(int taskId) {
+            return comments.values().stream()
+                    .filter(c -> c.getTaskId() == taskId)
+                    .sorted(Comparator.comparing(Comment::getCreatedAt))
+                    .map(this::copy)
+                    .collect(Collectors.toList());
+        }
+
+        @Override
+        public List<Comment> findAll() {
+            return comments.values().stream()
+                    .sorted(Comparator.comparing(Comment::getCreatedAt))
+                    .map(this::copy)
+                    .collect(Collectors.toList());
+        }
+
+        @Override
+        public Comment create(Comment comment) {
+            comment.setId(idSequence++);
+            if (comment.getCreatedAt() == null) {
+                comment.setCreatedAt(LocalDateTime.now());
+            }
+            comments.put(comment.getId(), copy(comment));
+            return copy(comment);
+        }
+
+        @Override
+        public void delete(int id) {
+            comments.remove(id);
         }
     }
 
@@ -1715,5 +1771,128 @@ public class ServiceLayerTest {
         assertEquals("High No DL", todoTasks.get(2).getName());
         assertEquals("Low Task", todoTasks.get(3).getName());
     }
+
+    @Test
+    public void testTaskCommentsAndCollaboration() throws Exception {
+        UserDAO uDAO = new InMemoryUserDAO();
+        ProjectDAO pDAO = new InMemoryProjectDAO();
+        TaskDAO tDAO = new InMemoryTaskDAO();
+        NotificationDAO nDAO = new InMemoryNotificationDAO();
+        ActivityLogDAO lDAO = new InMemoryActivityLogDAO();
+        CommentDAO cDAO = new InMemoryCommentDAO();
+
+        UserService uService = new UserServiceImpl(uDAO, lDAO);
+        ProjectService pService = new ProjectServiceImpl(pDAO, lDAO);
+        TaskService tService = new TaskServiceImpl(tDAO, pDAO, uDAO, nDAO, lDAO);
+        CommentService cService = new CommentServiceImpl(cDAO, tDAO, pDAO, uDAO, nDAO, lDAO);
+
+        LocalDate today = LocalDate.of(2026, 9, 5);
+
+        // 1. Setup Users (Admin, 2 Managers, 2 Employees)
+        User admin = uService.register(new User(0, "commentAdmin", "admin@comm.com", "", Role.ADMIN, "Admin User", LocalDateTime.now()), "Pass123!@#");
+        User rahul = uService.register(new User(0, "rahulMgr", "rahul@comm.com", "", Role.MANAGER, "Rahul", LocalDateTime.now()), "Pass123!@#");
+        User otherMgr = uService.register(new User(0, "otherMgr", "other@comm.com", "", Role.MANAGER, "Other Manager", LocalDateTime.now()), "Pass123!@#");
+        User priya = uService.register(new User(0, "priyaDev", "priya@comm.com", "", Role.EMPLOYEE, "Priya", LocalDateTime.now()), "Pass123!@#");
+        User bob = uService.register(new User(0, "bobDev", "bob@comm.com", "", Role.EMPLOYEE, "Bob", LocalDateTime.now()), "Pass123!@#");
+
+        // 2. Setup Project managed by Rahul
+        UserSession.getInstance().startSession(rahul);
+        Project project = new Project();
+        project.setName("IntelliFlow System");
+        project.setManagerId(rahul.getId());
+        project.setStartDate(today.minusDays(5));
+        project.setDeadline(today.plusDays(30));
+        project.setStatus(ProjectStatus.ACTIVE);
+        project = pService.createProject(project);
+
+        // 3. Setup Task assigned to Priya
+        Task task = new Task();
+        task.setProjectId(project.getId());
+        task.setName("Login Module");
+        task.setStatus(TaskStatus.IN_PROGRESS);
+        task.setPriority(TaskPriority.HIGH);
+        task.setAssignedEmployeeId(priya.getId());
+        task.setDeadline(today.plusDays(10));
+        task = tService.createTask(task);
+        final int taskId = task.getId();
+
+        // 4. Test Validation: Empty / Blank Comments
+        assertThrows(ValidationException.class, () -> cService.addComment(taskId, null));
+        assertThrows(ValidationException.class, () -> cService.addComment(taskId, ""));
+        assertThrows(ValidationException.class, () -> cService.addComment(taskId, "   "));
+
+        // 5. Test Validation: Non-existent task
+        assertThrows(ValidationException.class, () -> cService.addComment(9999, "Hello"));
+
+        // 6. Test Valid Comment from Manager (Rahul)
+        Comment c1 = cService.addComment(taskId, "Please complete validation.");
+        assertNotNull(c1);
+        assertTrue(c1.getId() > 0);
+        assertEquals("Please complete validation.", c1.getContent());
+        assertEquals("Rahul", c1.getAuthorName());
+        assertEquals(Role.MANAGER, c1.getAuthorRole());
+        assertNotNull(c1.getCreatedAt());
+
+        // Verify Notification sent to Assignee (Priya)
+        List<Notification> priyaNotifs = nDAO.findByUserId(priya.getId());
+        assertTrue(priyaNotifs.stream().anyMatch(n -> n.getMessage().contains("Rahul commented on your task 'Login Module'") && n.getMessage().contains("Please complete validation.")));
+
+        // Verify ActivityLog was created
+        List<ActivityLog> logs = lDAO.findAll();
+        assertTrue(logs.stream().anyMatch(l -> "TASK_COMMENT".equals(l.getAction()) && l.getDescription().contains("Rahul commented on task 'Login Module'")));
+
+        // 7. Test Valid Comment from Assignee Employee (Priya)
+        UserSession.getInstance().startSession(priya);
+        Comment c2 = cService.addComment(taskId, "Validation completed.");
+        assertNotNull(c2);
+        assertEquals("Validation completed.", c2.getContent());
+        assertEquals("Priya", c2.getAuthorName());
+        assertEquals(Role.EMPLOYEE, c2.getAuthorRole());
+
+        // Verify Notification sent to Project Manager (Rahul)
+        List<Notification> rahulNotifs = nDAO.findByUserId(rahul.getId());
+        assertTrue(rahulNotifs.stream().anyMatch(n -> n.getMessage().contains("Priya commented on task 'Login Module'") && n.getMessage().contains("Validation completed.")));
+
+        // 8. Test Chronological Retrieval of Comments
+        List<Comment> comments = cService.getCommentsByTaskId(taskId);
+        assertEquals(2, comments.size());
+        assertEquals("Rahul", comments.get(0).getAuthorName());
+        assertEquals(Role.MANAGER, comments.get(0).getAuthorRole());
+        assertEquals("Please complete validation.", comments.get(0).getContent());
+
+        assertEquals("Priya", comments.get(1).getAuthorName());
+        assertEquals(Role.EMPLOYEE, comments.get(1).getAuthorRole());
+        assertEquals("Validation completed.", comments.get(1).getContent());
+
+        // 9. Test Authorization: Unauthorized Employee (Bob) cannot view or add comments
+        UserSession.getInstance().startSession(bob);
+        assertThrows(UnauthorizedException.class, () -> cService.getCommentsByTaskId(taskId));
+        assertThrows(UnauthorizedException.class, () -> cService.addComment(taskId, "Unauthorized comment attempt"));
+
+        // 10. Test Authorization: Unauthorized Manager (otherMgr) cannot view or add comments to Rahul's project
+        UserSession.getInstance().startSession(otherMgr);
+        assertThrows(UnauthorizedException.class, () -> cService.getCommentsByTaskId(taskId));
+        assertThrows(UnauthorizedException.class, () -> cService.addComment(taskId, "Manager intrusion"));
+
+        // 11. Test Authorization: Admin can view and comment on any task
+        UserSession.getInstance().startSession(admin);
+        Comment cAdmin = cService.addComment(taskId, "Approved by QA.");
+        assertEquals("Admin User", cAdmin.getAuthorName());
+        assertEquals(Role.ADMIN, cAdmin.getAuthorRole());
+
+        List<Comment> adminView = cService.getCommentsByTaskId(taskId);
+        assertEquals(3, adminView.size());
+
+        // 12. Test Deleting Comments
+        // Priya deletes her own comment
+        UserSession.getInstance().startSession(priya);
+        cService.deleteComment(c2.getId());
+        List<Comment> afterDelete = cService.getCommentsByTaskId(taskId);
+        assertEquals(2, afterDelete.size());
+
+        // Priya cannot delete Rahul's comment
+        assertThrows(UnauthorizedException.class, () -> cService.deleteComment(c1.getId()));
+    }
 }
+
 
