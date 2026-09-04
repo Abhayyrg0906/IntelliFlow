@@ -22,15 +22,24 @@ public class ProjectServiceImpl implements ProjectService {
 
     private final ProjectDAO projectDAO;
     private final ActivityLogDAO logDAO;
+    private final com.intelliflow.dao.interfaces.NotificationDAO notificationDAO;
 
     public ProjectServiceImpl() {
         this.projectDAO = new ProjectDAOImpl();
         this.logDAO = new ActivityLogDAOImpl();
+        this.notificationDAO = new com.intelliflow.dao.impl.NotificationDAOImpl();
     }
 
     public ProjectServiceImpl(ProjectDAO projectDAO, ActivityLogDAO logDAO) {
         this.projectDAO = projectDAO;
         this.logDAO = logDAO;
+        this.notificationDAO = new com.intelliflow.dao.impl.NotificationDAOImpl();
+    }
+
+    public ProjectServiceImpl(ProjectDAO projectDAO, ActivityLogDAO logDAO, com.intelliflow.dao.interfaces.NotificationDAO notificationDAO) {
+        this.projectDAO = projectDAO;
+        this.logDAO = logDAO;
+        this.notificationDAO = notificationDAO;
     }
 
     private void checkWritePermission() throws UnauthorizedException {
@@ -61,6 +70,10 @@ public class ProjectServiceImpl implements ProjectService {
         audit.setDescription("Created project: " + created.getName() + " (ID: " + created.getId() + ")");
         logDAO.create(audit);
 
+        if (created.getManagerId() != null) {
+            sendNotification(created.getManagerId(), "You have been assigned as Manager for project: " + created.getName());
+        }
+
         return created;
     }
 
@@ -76,6 +89,9 @@ public class ProjectServiceImpl implements ProjectService {
         }
         ValidationUtil.validateDateRange(project.getStartDate(), project.getDeadline());
 
+        Optional<Project> originalOpt = projectDAO.findById(project.getId());
+        Project original = originalOpt.orElse(null);
+
         projectDAO.update(project);
 
         User currentUser = UserSession.getInstance().getCurrentUser();
@@ -84,6 +100,34 @@ public class ProjectServiceImpl implements ProjectService {
         audit.setAction("PROJECT_UPDATE");
         audit.setDescription("Updated project: " + project.getName() + " (ID: " + project.getId() + ")");
         logDAO.create(audit);
+
+        if (original != null) {
+            // Manager assigned/changed
+            if (project.getManagerId() != null && !project.getManagerId().equals(original.getManagerId())) {
+                sendNotification(project.getManagerId(), "You have been assigned as Manager for project: " + project.getName());
+            }
+            // Status changed
+            if (project.getStatus() != original.getStatus() && project.getManagerId() != null) {
+                sendNotification(project.getManagerId(), "Project '" + project.getName() + "' status changed from " + original.getStatus() + " to " + project.getStatus());
+            }
+            // Deadline changed
+            if (project.getDeadline() != null && !project.getDeadline().equals(original.getDeadline()) && project.getManagerId() != null) {
+                sendNotification(project.getManagerId(), "Project '" + project.getName() + "' deadline changed to " + project.getDeadline());
+            }
+        }
+    }
+
+    private void sendNotification(int userId, String message) {
+        try {
+            com.intelliflow.model.Notification notif = new com.intelliflow.model.Notification();
+            notif.setUserId(userId);
+            notif.setMessage(message);
+            notif.setRead(false);
+            notif.setCreatedAt(java.time.LocalDateTime.now());
+            notificationDAO.create(notif);
+        } catch (Exception e) {
+            System.err.println("Failed to write project notification: " + e.getMessage());
+        }
     }
 
     @Override

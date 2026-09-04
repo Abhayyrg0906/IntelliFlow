@@ -13,4 +13,6 @@ public interface NotificationDAO {
     void markAsRead(int id) throws DatabaseException;
     void markAllAsRead(int userId) throws DatabaseException;
     void delete(int id) throws DatabaseException;
+    void deleteAllByUserId(int userId) throws DatabaseException;
+    boolean existsUnread(int userId, String message) throws DatabaseException;
 }

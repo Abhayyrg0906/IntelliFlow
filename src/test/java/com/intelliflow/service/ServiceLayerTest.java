@@ -76,14 +76,30 @@ public class ServiceLayerTest {
         private final Map<Integer, Project> projects = new HashMap<>();
         private int idSequence = 1;
 
+        private Project copy(Project p) {
+            if (p == null) return null;
+            Project c = new Project();
+            c.setId(p.getId());
+            c.setName(p.getName());
+            c.setDescription(p.getDescription());
+            c.setManagerId(p.getManagerId());
+            c.setStartDate(p.getStartDate());
+            c.setDeadline(p.getDeadline());
+            c.setStatus(p.getStatus());
+            c.setCreatedAt(p.getCreatedAt());
+            return c;
+        }
+
         @Override
         public Optional<Project> findById(int id) {
-            return Optional.ofNullable(projects.get(id));
+            return Optional.ofNullable(copy(projects.get(id)));
         }
 
         @Override
         public List<Project> findAll() {
-            return new ArrayList<>(projects.values());
+            List<Project> list = new ArrayList<>();
+            for (Project p : projects.values()) list.add(copy(p));
+            return list;
         }
 
         @Override
@@ -91,7 +107,7 @@ public class ServiceLayerTest {
             List<Project> result = new ArrayList<>();
             for (Project p : projects.values()) {
                 if (p.getManagerId() != null && p.getManagerId() == managerId) {
-                    result.add(p);
+                    result.add(copy(p));
                 }
             }
             return result;
@@ -100,13 +116,13 @@ public class ServiceLayerTest {
         @Override
         public Project create(Project project) {
             project.setId(idSequence++);
-            projects.put(project.getId(), project);
-            return project;
+            projects.put(project.getId(), copy(project));
+            return copy(project);
         }
 
         @Override
         public void update(Project project) {
-            projects.put(project.getId(), project);
+            projects.put(project.getId(), copy(project));
         }
 
         @Override
@@ -119,9 +135,25 @@ public class ServiceLayerTest {
         private final Map<Integer, Task> tasks = new HashMap<>();
         private int idSequence = 1;
 
+        private Task copy(Task t) {
+            if (t == null) return null;
+            Task c = new Task();
+            c.setId(t.getId());
+            c.setProjectId(t.getProjectId());
+            c.setName(t.getName());
+            c.setDescription(t.getDescription());
+            c.setAssignedEmployeeId(t.getAssignedEmployeeId());
+            c.setPriority(t.getPriority());
+            c.setDeadline(t.getDeadline());
+            c.setStatus(t.getStatus());
+            c.setCreatedAt(t.getCreatedAt());
+            c.setUpdatedAt(t.getUpdatedAt());
+            return c;
+        }
+
         @Override
         public Optional<Task> findById(int id) {
-            return Optional.ofNullable(tasks.get(id));
+            return Optional.ofNullable(copy(tasks.get(id)));
         }
 
         @Override
@@ -129,7 +161,7 @@ public class ServiceLayerTest {
             List<Task> result = new ArrayList<>();
             for (Task t : tasks.values()) {
                 if (t.getProjectId() == projectId) {
-                    result.add(t);
+                    result.add(copy(t));
                 }
             }
             return result;
@@ -140,7 +172,7 @@ public class ServiceLayerTest {
             List<Task> result = new ArrayList<>();
             for (Task t : tasks.values()) {
                 if (t.getAssignedEmployeeId() != null && t.getAssignedEmployeeId() == employeeId) {
-                    result.add(t);
+                    result.add(copy(t));
                 }
             }
             return result;
@@ -148,19 +180,21 @@ public class ServiceLayerTest {
 
         @Override
         public List<Task> findAll() {
-            return new ArrayList<>(tasks.values());
+            List<Task> list = new ArrayList<>();
+            for (Task t : tasks.values()) list.add(copy(t));
+            return list;
         }
 
         @Override
         public Task create(Task task) {
             task.setId(idSequence++);
-            tasks.put(task.getId(), task);
-            return task;
+            tasks.put(task.getId(), copy(task));
+            return copy(task);
         }
 
         @Override
         public void update(Task task) {
-            tasks.put(task.getId(), task);
+            tasks.put(task.getId(), copy(task));
         }
 
         @Override
@@ -216,6 +250,16 @@ public class ServiceLayerTest {
         @Override
         public void delete(int id) {
             notifications.removeIf(n -> n.getId() == id);
+        }
+
+        @Override
+        public void deleteAllByUserId(int userId) {
+            notifications.removeIf(n -> n.getUserId() == userId);
+        }
+
+        @Override
+        public boolean existsUnread(int userId, String message) {
+            return notifications.stream().anyMatch(n -> n.getUserId() == userId && !n.isRead() && n.getMessage().equals(message));
         }
     }
 
@@ -999,5 +1043,113 @@ public class ServiceLayerTest {
         assertTrue(emp2Alerts.stream().anyMatch(a -> a.getMessage().contains("due today")));
         assertTrue(emp2Alerts.stream().anyMatch(a -> a.getMessage().contains("due soon")));
         assertFalse(emp2Alerts.stream().anyMatch(a -> a.getMessage().contains("overdue task")));
+    }
+
+    @Test
+    public void testNotificationCenterOperationsAndEventTriggers() throws Exception {
+        InMemoryUserDAO uDAO = new InMemoryUserDAO();
+        InMemoryProjectDAO pDAO = new InMemoryProjectDAO();
+        InMemoryTaskDAO tDAO = new InMemoryTaskDAO();
+        InMemoryNotificationDAO nDAO = new InMemoryNotificationDAO();
+        InMemoryActivityLogDAO lDAO = new InMemoryActivityLogDAO();
+
+        NotificationService notifService = new NotificationServiceImpl(nDAO, tDAO, pDAO);
+        TaskService tService = new TaskServiceImpl(tDAO, pDAO, uDAO, nDAO, lDAO);
+        ProjectService pService = new ProjectServiceImpl(pDAO, lDAO, nDAO);
+
+        User admin = new User(0, "admin", "admin@test.com", "hash", Role.ADMIN, "Admin User", LocalDateTime.now());
+        admin = uDAO.create(admin);
+
+        User manager = new User(0, "manager", "manager@test.com", "hash", Role.MANAGER, "Manager User", LocalDateTime.now());
+        manager = uDAO.create(manager);
+
+        User emp = new User(0, "employee", "emp@test.com", "hash", Role.EMPLOYEE, "Employee User", LocalDateTime.now());
+        emp = uDAO.create(emp);
+
+        // 1. Notification CRUD & Read/Unread State Tests
+        Notification n1 = notifService.createNotification(emp.getId(), "Test alert 1");
+        Notification n2 = notifService.createNotification(emp.getId(), "Test alert 2");
+
+        assertEquals(2, notifService.getNotificationsForUser(emp.getId()).size());
+        assertEquals(2, notifService.getUnreadNotificationsForUser(emp.getId()).size());
+
+        // Mark single as read
+        notifService.markAsRead(n1.getId());
+        assertEquals(1, notifService.getUnreadNotificationsForUser(emp.getId()).size());
+
+        // Mark all as read
+        notifService.markAllAsRead(emp.getId());
+        assertEquals(0, notifService.getUnreadNotificationsForUser(emp.getId()).size());
+
+        // Delete single
+        notifService.deleteNotification(n1.getId());
+        assertEquals(1, notifService.getNotificationsForUser(emp.getId()).size());
+
+        // Clear all
+        notifService.deleteAllNotificationsForUser(emp.getId());
+        assertEquals(0, notifService.getNotificationsForUser(emp.getId()).size());
+
+        // 2. Project Assignment Event Notification
+        UserSession.getInstance().startSession(admin);
+        Project proj = new Project();
+        proj.setName("Cloud Migration");
+        proj.setStartDate(LocalDate.now());
+        proj.setDeadline(LocalDate.now().plusDays(30));
+        proj.setStatus(ProjectStatus.ACTIVE);
+        proj.setManagerId(manager.getId());
+        Project createdProj = pService.createProject(proj);
+
+        List<Notification> mgrNotifs = notifService.getNotificationsForUser(manager.getId());
+        assertEquals(1, mgrNotifs.size());
+        assertTrue(mgrNotifs.get(0).getMessage().contains("assigned as Manager"));
+
+        // 3. Task Assignment Event Notification
+        Task task = new Task();
+        task.setProjectId(createdProj.getId());
+        task.setName("Deploy Database Cluster");
+        task.setPriority(TaskPriority.HIGH);
+        task.setStatus(TaskStatus.TO_DO);
+        task.setDeadline(LocalDate.now().plusDays(10));
+        task.setAssignedEmployeeId(emp.getId());
+        Task createdTask = tService.createTask(task);
+
+        List<Notification> empNotifs = notifService.getNotificationsForUser(emp.getId());
+        assertEquals(1, empNotifs.size());
+        assertTrue(empNotifs.get(0).getMessage().contains("assigned to new task"));
+
+        // 4. Task Priority Change Notification
+        createdTask.setPriority(TaskPriority.CRITICAL);
+        tService.updateTask(createdTask);
+
+        empNotifs = notifService.getNotificationsForUser(emp.getId());
+        assertEquals(2, empNotifs.size());
+        assertTrue(empNotifs.stream().anyMatch(n -> n.getMessage().contains("priority changed")));
+
+        // 5. Task Status Change Notification
+        UserSession.getInstance().startSession(emp);
+        tService.updateTaskStatus(createdTask.getId(), TaskStatus.IN_PROGRESS);
+
+        mgrNotifs = notifService.getNotificationsForUser(manager.getId());
+        assertTrue(mgrNotifs.stream().anyMatch(n -> n.getMessage().contains("status updated to IN_PROGRESS")));
+
+        // 6. Deadline Notifications & Deduplication Test
+        Task overdueTask = new Task();
+        overdueTask.setProjectId(createdProj.getId());
+        overdueTask.setName("Urgent Bugfix");
+        overdueTask.setPriority(TaskPriority.CRITICAL);
+        overdueTask.setStatus(TaskStatus.IN_PROGRESS);
+        overdueTask.setDeadline(LocalDate.now().minusDays(3)); // Overdue
+        overdueTask.setAssignedEmployeeId(emp.getId());
+        tDAO.create(overdueTask);
+
+        int generated = notifService.checkAndGenerateDeadlineNotifications(LocalDate.now());
+        assertTrue(generated >= 1);
+
+        empNotifs = notifService.getNotificationsForUser(emp.getId());
+        assertTrue(empNotifs.stream().anyMatch(n -> n.getMessage().contains("Task overdue")));
+
+        // Re-running deadline check should NOT duplicate unread notifications
+        int generatedAgain = notifService.checkAndGenerateDeadlineNotifications(LocalDate.now());
+        assertEquals(0, generatedAgain);
     }
 }

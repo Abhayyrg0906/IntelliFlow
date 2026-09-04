@@ -12,20 +12,24 @@ import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import javax.swing.table.DefaultTableModel;
 import java.awt.*;
+import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Collectors;
 
 public class NotificationsView extends BaseView {
     private final MainFrame mainFrame;
 
     private ModernTable notificationTable;
     private DefaultTableModel tableModel;
+    private JComboBox<String> filterCombo;
     private JButton readBtn;
     private JButton readAllBtn;
     private JButton deleteBtn;
+    private JButton clearAllBtn;
 
-    private List<Notification> displayedNotifications = new ArrayList<>();
+    private List<Notification> allNotifications = new ArrayList<>();
 
     public NotificationsView(MainFrame mainFrame) {
         this.mainFrame = mainFrame;
@@ -38,8 +42,12 @@ public class NotificationsView extends BaseView {
     }
 
     private void initActionBar() {
-        JPanel actionBar = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0));
+        JPanel actionBar = new JPanel(new BorderLayout());
         actionBar.setOpaque(false);
+
+        // Left buttons
+        JPanel leftPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0));
+        leftPanel.setOpaque(false);
 
         readBtn = new JButton("✔ Mark Read");
         readBtn.setBackground(ThemeManager.COLOR_CARD);
@@ -62,9 +70,37 @@ public class NotificationsView extends BaseView {
         deleteBtn.setCursor(new Cursor(Cursor.HAND_CURSOR));
         deleteBtn.addActionListener(e -> handleDelete());
 
-        actionBar.add(readBtn);
-        actionBar.add(readAllBtn);
-        actionBar.add(deleteBtn);
+        clearAllBtn = new JButton("🧹 Clear All");
+        clearAllBtn.setBackground(new Color(185, 28, 28));
+        clearAllBtn.setForeground(ThemeManager.COLOR_TEXT_PRIMARY);
+        clearAllBtn.setFont(ThemeManager.FONT_BOLD_SMALL);
+        clearAllBtn.setCursor(new Cursor(Cursor.HAND_CURSOR));
+        clearAllBtn.addActionListener(e -> handleClearAll());
+
+        leftPanel.add(readBtn);
+        leftPanel.add(readAllBtn);
+        leftPanel.add(deleteBtn);
+        leftPanel.add(clearAllBtn);
+
+        // Right filter
+        JPanel rightPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 0));
+        rightPanel.setOpaque(false);
+
+        JLabel filterLabel = new JLabel("Filter:");
+        filterLabel.setForeground(ThemeManager.COLOR_TEXT_MUTED);
+        filterLabel.setFont(ThemeManager.FONT_BODY);
+
+        filterCombo = new JComboBox<>(new String[]{"All Notifications", "Unread Only"});
+        filterCombo.setBackground(ThemeManager.COLOR_CARD);
+        filterCombo.setForeground(ThemeManager.COLOR_TEXT_PRIMARY);
+        filterCombo.setFont(ThemeManager.FONT_BODY);
+        filterCombo.addActionListener(e -> applyFilter());
+
+        rightPanel.add(filterLabel);
+        rightPanel.add(filterCombo);
+
+        actionBar.add(leftPanel, BorderLayout.WEST);
+        actionBar.add(rightPanel, BorderLayout.EAST);
 
         add(actionBar, BorderLayout.NORTH);
     }
@@ -75,8 +111,13 @@ public class NotificationsView extends BaseView {
         tableContainer.setBorder(new EmptyBorder(15, 15, 15, 15));
 
         tableModel = new DefaultTableModel(
-                new Object[]{"ID", "Alert Message", "Status", "Received Date"}, 0
-        );
+                new Object[]{"ID", "Notification Alert Message", "Status", "Received Timestamp"}, 0
+        ) {
+            @Override
+            public boolean isCellEditable(int row, int column) {
+                return false;
+            }
+        };
         notificationTable = new ModernTable();
         notificationTable.setModel(tableModel);
 
@@ -95,25 +136,20 @@ public class NotificationsView extends BaseView {
         SwingWorker<List<Notification>, Void> worker = new SwingWorker<>() {
             @Override
             protected List<Notification> doInBackground() throws Exception {
+                // Check and trigger deadline notifications dynamically
+                try {
+                    mainFrame.getNotificationService().checkAndGenerateDeadlineNotifications(LocalDate.now());
+                } catch (Exception ignored) {}
+
                 return mainFrame.getNotificationService().getNotificationsForUser(currentUser.getId());
             }
 
             @Override
             protected void done() {
                 try {
-                    displayedNotifications = get();
-                    tableModel.setRowCount(0);
-                    
-                    DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
-
-                    for (Notification n : displayedNotifications) {
-                        tableModel.addRow(new Object[]{
-                                n.getId(),
-                                n.getMessage(),
-                                n.isRead() ? "Read" : "Unread (New)",
-                                n.getCreatedAt() != null ? n.getCreatedAt().format(formatter) : ""
-                        });
-                    }
+                    allNotifications = get();
+                    applyFilter();
+                    mainFrame.updateNotificationCount();
                 } catch (Exception e) {
                     System.err.println("Failed to reload notifications: " + e.getMessage());
                 }
@@ -122,10 +158,31 @@ public class NotificationsView extends BaseView {
         worker.execute();
     }
 
+    private void applyFilter() {
+        tableModel.setRowCount(0);
+        String selected = (String) filterCombo.getSelectedItem();
+        boolean unreadOnly = "Unread Only".equals(selected);
+
+        List<Notification> filtered = unreadOnly
+                ? allNotifications.stream().filter(n -> !n.isRead()).collect(Collectors.toList())
+                : allNotifications;
+
+        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+
+        for (Notification n : filtered) {
+            tableModel.addRow(new Object[]{
+                    n.getId(),
+                    n.getMessage(),
+                    n.isRead() ? "Read" : "🔵 Unread (New)",
+                    n.getCreatedAt() != null ? n.getCreatedAt().format(formatter) : ""
+            });
+        }
+    }
+
     private void handleMarkRead() {
         int selectedRow = notificationTable.getSelectedRow();
         if (selectedRow < 0) {
-            JOptionPane.showMessageDialog(this, "Please select an alert row to mark as read.", "Selection Required", JOptionPane.WARNING_MESSAGE);
+            JOptionPane.showMessageDialog(this, "Please select a notification row to mark as read.", "Selection Required", JOptionPane.WARNING_MESSAGE);
             return;
         }
         int notifId = (int) tableModel.getValueAt(selectedRow, 0);
@@ -142,7 +199,6 @@ public class NotificationsView extends BaseView {
                 try {
                     get();
                     refresh();
-                    mainFrame.updateNotificationCount();
                 } catch (Exception ignored) {}
             }
         };
@@ -165,7 +221,6 @@ public class NotificationsView extends BaseView {
                 try {
                     get();
                     refresh();
-                    mainFrame.updateNotificationCount();
                 } catch (Exception ignored) {}
             }
         };
@@ -175,7 +230,7 @@ public class NotificationsView extends BaseView {
     private void handleDelete() {
         int selectedRow = notificationTable.getSelectedRow();
         if (selectedRow < 0) {
-            JOptionPane.showMessageDialog(this, "Please select an alert to delete.", "Selection Required", JOptionPane.WARNING_MESSAGE);
+            JOptionPane.showMessageDialog(this, "Please select a notification to delete.", "Selection Required", JOptionPane.WARNING_MESSAGE);
             return;
         }
         int notifId = (int) tableModel.getValueAt(selectedRow, 0);
@@ -192,10 +247,41 @@ public class NotificationsView extends BaseView {
                 try {
                     get();
                     refresh();
-                    mainFrame.updateNotificationCount();
+                } catch (Exception ignored) {}
+            }
+        };
+        worker.execute();
+    }
+
+    private void handleClearAll() {
+        User currentUser = UserSession.getInstance().getCurrentUser();
+        if (currentUser == null) return;
+
+        int confirm = JOptionPane.showConfirmDialog(
+                this,
+                "Are you sure you want to clear all your notifications?",
+                "Confirm Clear All",
+                JOptionPane.YES_NO_OPTION,
+                JOptionPane.WARNING_MESSAGE
+        );
+        if (confirm != JOptionPane.YES_OPTION) return;
+
+        SwingWorker<Void, Void> worker = new SwingWorker<>() {
+            @Override
+            protected Void doInBackground() throws Exception {
+                mainFrame.getNotificationService().deleteAllNotificationsForUser(currentUser.getId());
+                return null;
+            }
+
+            @Override
+            protected void done() {
+                try {
+                    get();
+                    refresh();
                 } catch (Exception ignored) {}
             }
         };
         worker.execute();
     }
 }
+

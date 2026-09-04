@@ -64,7 +64,7 @@ public class TaskServiceImpl implements TaskService {
 
         // Assign Notification
         if (created.getAssignedEmployeeId() != null) {
-            sendNotification(created.getAssignedEmployeeId(), "New task assigned: " + created.getName());
+            sendNotification(created.getAssignedEmployeeId(), "You have been assigned to new task: " + created.getName() + " (Priority: " + created.getPriority() + ")");
         }
 
         return created;
@@ -92,10 +92,34 @@ public class TaskServiceImpl implements TaskService {
         audit.setDescription("Updated task: " + task.getName() + " (ID: " + task.getId() + ")");
         logDAO.create(audit);
 
-        // If assignment changed, notify the new assignee
+        // 1. If assignment changed, notify the new assignee
         if (task.getAssignedEmployeeId() != null && 
             !task.getAssignedEmployeeId().equals(original.getAssignedEmployeeId())) {
-            sendNotification(task.getAssignedEmployeeId(), "You have been assigned to task: " + task.getName());
+            sendNotification(task.getAssignedEmployeeId(), "You have been assigned to task: " + task.getName() + " (Priority: " + task.getPriority() + ")");
+        }
+
+        // 2. If priority changed, notify assigned employee and project manager
+        if (task.getPriority() != original.getPriority()) {
+            if (task.getAssignedEmployeeId() != null) {
+                sendNotification(task.getAssignedEmployeeId(), "Task '" + task.getName() + "' priority changed from " + original.getPriority() + " to " + task.getPriority());
+            }
+            Optional<Project> projectOpt = projectDAO.findById(task.getProjectId());
+            if (projectOpt.isPresent() && projectOpt.get().getManagerId() != null && 
+                (currentUser == null || projectOpt.get().getManagerId() != currentUser.getId())) {
+                sendNotification(projectOpt.get().getManagerId(), "Task '" + task.getName() + "' priority changed from " + original.getPriority() + " to " + task.getPriority());
+            }
+        }
+
+        // 3. If status changed, notify assignee
+        if (task.getStatus() != original.getStatus()) {
+            if (task.getAssignedEmployeeId() != null && (currentUser == null || task.getAssignedEmployeeId() != currentUser.getId())) {
+                sendNotification(task.getAssignedEmployeeId(), "Task '" + task.getName() + "' status changed from " + original.getStatus() + " to " + task.getStatus());
+            }
+            Optional<Project> projectOpt = projectDAO.findById(task.getProjectId());
+            if (projectOpt.isPresent() && projectOpt.get().getManagerId() != null && 
+                (currentUser == null || projectOpt.get().getManagerId() != currentUser.getId())) {
+                sendNotification(projectOpt.get().getManagerId(), "Task '" + task.getName() + "' status changed from " + original.getStatus() + " to " + task.getStatus());
+            }
         }
     }
 
@@ -134,11 +158,17 @@ public class TaskServiceImpl implements TaskService {
         audit.setDescription("Task '" + task.getName() + "' status changed from " + oldStatus + " to " + newStatus);
         logDAO.create(audit);
 
-        // Notify Project Manager and/or Admin of change
+        // Notify Project Manager of change (if manager is not the user changing it)
         Optional<Project> projectOpt = projectDAO.findById(task.getProjectId());
-        if (projectOpt.isPresent() && projectOpt.get().getManagerId() != null) {
+        if (projectOpt.isPresent() && projectOpt.get().getManagerId() != null && projectOpt.get().getManagerId() != currentUser.getId()) {
             sendNotification(projectOpt.get().getManagerId(), 
                 "Task '" + task.getName() + "' status updated to " + newStatus + " by " + currentUser.getFullName());
+        }
+
+        // Notify Assigned Employee if status was updated by Manager/Admin
+        if (task.getAssignedEmployeeId() != null && task.getAssignedEmployeeId() != currentUser.getId()) {
+            sendNotification(task.getAssignedEmployeeId(),
+                "Your task '" + task.getName() + "' status was updated to " + newStatus + " by " + currentUser.getFullName());
         }
     }
 

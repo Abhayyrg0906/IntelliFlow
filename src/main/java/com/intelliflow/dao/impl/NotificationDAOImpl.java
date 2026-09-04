@@ -149,4 +149,33 @@ public class NotificationDAOImpl implements NotificationDAO {
             throw new DatabaseException("Error deleting notification with ID: " + id, e);
         }
     }
+
+    @Override
+    public void deleteAllByUserId(int userId) throws DatabaseException {
+        String sql = "DELETE FROM notifications WHERE user_id = ?";
+        try (Connection conn = DBUtil.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            
+            pstmt.setInt(1, userId);
+            pstmt.executeUpdate();
+        } catch (SQLException e) {
+            throw new DatabaseException("Error deleting all notifications for user ID: " + userId, e);
+        }
+    }
+
+    @Override
+    public boolean existsUnread(int userId, String message) throws DatabaseException {
+        String sql = "SELECT 1 FROM notifications WHERE user_id = ? AND message = ? AND is_read = FALSE LIMIT 1";
+        try (Connection conn = DBUtil.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            
+            pstmt.setInt(1, userId);
+            pstmt.setString(2, message);
+            try (ResultSet rs = pstmt.executeQuery()) {
+                return rs.next();
+            }
+        } catch (SQLException e) {
+            throw new DatabaseException("Error checking unread notification existence for user ID: " + userId, e);
+        }
+    }
 }
