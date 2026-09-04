@@ -844,4 +844,67 @@ public class ServiceLayerTest {
         assertEquals(com.intelliflow.enums.DeadlineState.NO_DEADLINE, com.intelliflow.util.DeadlineUtil.calculateDeadlineState(noDeadlineTask, today));
         assertEquals("📅 No deadline", com.intelliflow.util.DeadlineUtil.formatDeadlineDisplay(noDeadlineTask, today, null));
     }
+
+    @Test
+    public void testProjectHealthCalculation() {
+        LocalDate today = LocalDate.of(2026, 9, 4);
+
+        Project project = new Project();
+        project.setId(1);
+        project.setName("Cloud Native Migration");
+        project.setStartDate(today.minusDays(15));
+        project.setDeadline(today.plusDays(30));
+        project.setStatus(ProjectStatus.ACTIVE);
+
+        // 1. All tasks on track / completed -> ON_TRACK
+        Task task1 = new Task();
+        task1.setStatus(TaskStatus.COMPLETED);
+        task1.setPriority(TaskPriority.MEDIUM);
+
+        Task task2 = new Task();
+        task2.setStatus(TaskStatus.IN_PROGRESS);
+        task2.setPriority(TaskPriority.LOW);
+        task2.setDeadline(today.plusDays(10));
+
+        assertEquals(com.intelliflow.enums.ProjectHealth.ON_TRACK, 
+                com.intelliflow.util.ProjectHealthUtil.calculateProjectHealth(project, List.of(task1, task2), today));
+
+        // 2. Critical incomplete task -> AT_RISK
+        Task taskCritical = new Task();
+        taskCritical.setStatus(TaskStatus.TO_DO);
+        taskCritical.setPriority(TaskPriority.CRITICAL);
+        taskCritical.setDeadline(today.plusDays(10));
+
+        assertEquals(com.intelliflow.enums.ProjectHealth.AT_RISK,
+                com.intelliflow.util.ProjectHealthUtil.calculateProjectHealth(project, List.of(task1, task2, taskCritical), today));
+
+        // 3. Overdue incomplete task -> DELAYED
+        Task taskOverdue = new Task();
+        taskOverdue.setStatus(TaskStatus.IN_PROGRESS);
+        taskOverdue.setPriority(TaskPriority.LOW);
+        taskOverdue.setDeadline(today.minusDays(2)); // Overdue
+
+        assertEquals(com.intelliflow.enums.ProjectHealth.DELAYED,
+                com.intelliflow.util.ProjectHealthUtil.calculateProjectHealth(project, List.of(task1, task2, taskOverdue), today));
+
+        // 4. Overdue Project Deadline itself -> DELAYED
+        Project expiredProject = new Project();
+        expiredProject.setId(2);
+        expiredProject.setName("Past Project");
+        expiredProject.setDeadline(today.minusDays(1));
+        expiredProject.setStatus(ProjectStatus.ACTIVE);
+
+        assertEquals(com.intelliflow.enums.ProjectHealth.DELAYED,
+                com.intelliflow.util.ProjectHealthUtil.calculateProjectHealth(expiredProject, List.of(task1), today));
+
+        // 5. Completed Project -> ON_TRACK
+        Project completedProject = new Project();
+        completedProject.setId(3);
+        completedProject.setName("Finished Project");
+        completedProject.setDeadline(today.minusDays(5));
+        completedProject.setStatus(ProjectStatus.COMPLETED);
+
+        assertEquals(com.intelliflow.enums.ProjectHealth.ON_TRACK,
+                com.intelliflow.util.ProjectHealthUtil.calculateProjectHealth(completedProject, List.of(task1, taskOverdue), today));
+    }
 }

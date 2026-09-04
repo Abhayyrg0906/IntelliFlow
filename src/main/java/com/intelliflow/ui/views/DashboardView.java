@@ -4,6 +4,8 @@ import com.intelliflow.context.UserSession;
 import com.intelliflow.enums.Role;
 import com.intelliflow.enums.TaskStatus;
 import com.intelliflow.enums.ProjectStatus;
+import com.intelliflow.enums.ProjectHealth;
+import com.intelliflow.util.ProjectHealthUtil;
 import com.intelliflow.model.*;
 import com.intelliflow.ui.MainFrame;
 import com.intelliflow.ui.ThemeManager;
@@ -16,7 +18,7 @@ import javax.swing.table.DefaultTableModel;
 import java.awt.*;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -166,7 +168,7 @@ public class DashboardView extends BaseView {
         sectionsGrid.setPreferredSize(new Dimension(1000, 540));
 
         // Recent Projects
-        adminProjectsModel = new DefaultTableModel(new Object[]{"Project Name", "Manager", "Deadline", "Status"}, 0);
+        adminProjectsModel = new DefaultTableModel(new Object[]{"Project Name", "Manager", "Deadline", "Status", "Health"}, 0);
         ModernTable projectsTable = new ModernTable();
         projectsTable.setModel(adminProjectsModel);
         projectsTable.setPlaceholderText("No projects available.");
@@ -285,7 +287,7 @@ public class DashboardView extends BaseView {
         sectionsGrid.setPreferredSize(new Dimension(1000, 540));
 
         // Recent Projects
-        managerProjectsModel = new DefaultTableModel(new Object[]{"Project Name", "Start Date", "Deadline", "Status"}, 0);
+        managerProjectsModel = new DefaultTableModel(new Object[]{"Project Name", "Start Date", "Deadline", "Status", "Health"}, 0);
         ModernTable managerProjectsTable = new ModernTable();
         managerProjectsTable.setModel(managerProjectsModel);
         managerProjectsTable.setPlaceholderText("No projects managed.");
@@ -565,12 +567,19 @@ public class DashboardView extends BaseView {
                     adminActiveTasks = (int) allTasks.stream().filter(t -> t.getStatus() != TaskStatus.COMPLETED).count();
                     adminCompletedTasks = (int) allTasks.stream().filter(t -> t.getStatus() == TaskStatus.COMPLETED).count();
 
+                    Map<Integer, List<Task>> tasksByProject = allTasks.stream().collect(Collectors.groupingBy(Task::getProjectId));
+
                     // Table Rows
-                    adminProjRows = allProjects.stream().limit(5).map(p -> new String[]{
+                    adminProjRows = allProjects.stream().limit(5).map(p -> {
+                        List<Task> pTasks = tasksByProject.getOrDefault(p.getId(), Collections.emptyList());
+                        ProjectHealth health = ProjectHealthUtil.calculateProjectHealth(p, pTasks);
+                        return new String[]{
                             p.getName(),
                             p.getManagerId() != null ? userNames.getOrDefault(p.getManagerId(), "Unknown") : "Unassigned",
                             p.getDeadline() != null ? p.getDeadline().toString() : "No Deadline",
-                            p.getStatus().name()
+                            p.getStatus().name(),
+                            health.getDisplayName()
+                        };
                     }).collect(Collectors.toList());
 
                     adminTaskRows = allTasks.stream().limit(5).map(t -> new String[]{
@@ -620,12 +629,19 @@ public class DashboardView extends BaseView {
                         }
                     }
 
+                    Map<Integer, List<Task>> tasksByProject = allTasks.stream().collect(Collectors.groupingBy(Task::getProjectId));
+
                     // Table Rows
-                    mgrProjRows = managed.stream().limit(5).map(p -> new String[]{
+                    mgrProjRows = managed.stream().limit(5).map(p -> {
+                        List<Task> pTasks = tasksByProject.getOrDefault(p.getId(), Collections.emptyList());
+                        ProjectHealth health = ProjectHealthUtil.calculateProjectHealth(p, pTasks);
+                        return new String[]{
                             p.getName(),
                             p.getStartDate().toString(),
                             p.getDeadline() != null ? p.getDeadline().toString() : "No Deadline",
-                            p.getStatus().name()
+                            p.getStatus().name(),
+                            health.getDisplayName()
+                        };
                     }).collect(Collectors.toList());
 
                     mgrTaskRows = teamTasks.stream()

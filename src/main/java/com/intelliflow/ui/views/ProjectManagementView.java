@@ -2,6 +2,9 @@ package com.intelliflow.ui.views;
 
 import com.intelliflow.context.UserSession;
 import com.intelliflow.enums.ProjectStatus;
+import com.intelliflow.enums.ProjectHealth;
+import com.intelliflow.util.ProjectHealthUtil;
+import java.util.Collections;
 import com.intelliflow.enums.TaskPriority;
 import com.intelliflow.enums.TaskStatus;
 import com.intelliflow.enums.Role;
@@ -418,7 +421,7 @@ public class ProjectManagementView extends BaseView {
                 }
             });
 
-            // Header (Project Name & Status badge)
+            // Header (Project Name & Status/Health badges)
             JPanel headerPanel = new JPanel(new BorderLayout(8, 0));
             headerPanel.setOpaque(false);
 
@@ -427,8 +430,20 @@ public class ProjectManagementView extends BaseView {
             nameLabel.setForeground(ThemeManager.COLOR_TEXT_PRIMARY);
             headerPanel.add(nameLabel, BorderLayout.CENTER);
 
-            PillBadge statusBadge = new PillBadge(p.getStatus().toString(), getStatusColor(p.getStatus()), Color.WHITE, 6);
-            headerPanel.add(statusBadge, BorderLayout.EAST);
+            List<Task> pTasks = projectTasksCachedMap.getOrDefault(p.getId(), Collections.emptyList());
+            ProjectHealth health = ProjectHealthUtil.calculateProjectHealth(p, pTasks);
+            Color healthColor = switch (health) {
+                case ON_TRACK -> ThemeManager.COLOR_SUCCESS;
+                case AT_RISK -> ThemeManager.COLOR_WARNING;
+                case DELAYED -> ThemeManager.COLOR_DANGER;
+            };
+
+            JPanel badgesPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
+            badgesPanel.setOpaque(false);
+            badgesPanel.add(new PillBadge(health.getDisplayName(), healthColor, Color.WHITE, 6));
+            badgesPanel.add(new PillBadge(p.getStatus().toString(), getStatusColor(p.getStatus()), Color.WHITE, 6));
+
+            headerPanel.add(badgesPanel, BorderLayout.EAST);
 
             card.add(headerPanel, BorderLayout.NORTH);
 
@@ -663,13 +678,23 @@ public class ProjectManagementView extends BaseView {
         statusRow.add(new JLabel("Status:"));
         statusRow.add(new PillBadge(p.getStatus().toString(), getStatusColor(p.getStatus()), Color.WHITE, 8));
 
+        // Progress breakdown calculations
+        List<Task> pTasks = projectTasksCachedMap.getOrDefault(p.getId(), new ArrayList<>());
+        ProjectHealth health = ProjectHealthUtil.calculateProjectHealth(p, pTasks);
+        Color healthColor = switch (health) {
+            case ON_TRACK -> ThemeManager.COLOR_SUCCESS;
+            case AT_RISK -> ThemeManager.COLOR_WARNING;
+            case DELAYED -> ThemeManager.COLOR_DANGER;
+        };
+
+        statusRow.add(new JLabel("  Health:"));
+        statusRow.add(new PillBadge(health.getDisplayName(), healthColor, Color.WHITE, 8));
+
         DateTimeFormatter dtf = DateTimeFormatter.ofPattern("yyyy-MM-dd");
         String datesTimeline = p.getStartDate().format(dtf) + "  ➔  " + p.getDeadline().format(dtf);
         statusRow.add(new JLabel("  📅 Dates: " + datesTimeline));
         headerPanel.add(statusRow, gbc);
 
-        // Progress breakdown calculations
-        List<Task> pTasks = projectTasksCachedMap.getOrDefault(p.getId(), new ArrayList<>());
         int totalTasks = pTasks.size();
         int completedTasks = 0;
         int activeTasks = 0;
@@ -716,8 +741,8 @@ public class ProjectManagementView extends BaseView {
         overviewTab.setOpaque(false);
         overviewTab.setBorder(new EmptyBorder(15, 15, 15, 15));
 
-        // KPI Cards Grid (4 columns)
-        JPanel kpiPanel = new JPanel(new GridLayout(1, 4, 15, 15));
+        // KPI Cards Grid (5 columns)
+        JPanel kpiPanel = new JPanel(new GridLayout(1, 5, 15, 15));
         kpiPanel.setOpaque(false);
         kpiPanel.setPreferredSize(new Dimension(800, 110));
 
@@ -725,6 +750,7 @@ public class ProjectManagementView extends BaseView {
         kpiPanel.add(new DashboardCard("📋", "Total Tasks", String.valueOf(totalTasks), ThemeManager.COLOR_PRIMARY));
         kpiPanel.add(new DashboardCard("✓", "Completed", String.valueOf(completedTasks), ThemeManager.COLOR_SUCCESS));
         kpiPanel.add(new DashboardCard("⏳", "Active Tasks", String.valueOf(activeTasks), ThemeManager.COLOR_WARNING));
+        kpiPanel.add(new DashboardCard("🩺", "Project Health", health.getDisplayName(), healthColor));
         kpiPanel.add(new DashboardCard("👤", "Manager", managerName, ThemeManager.COLOR_PRIMARY_HOVER));
         overviewTab.add(kpiPanel, BorderLayout.NORTH);
 
