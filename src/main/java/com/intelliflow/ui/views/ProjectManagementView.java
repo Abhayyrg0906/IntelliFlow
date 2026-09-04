@@ -14,6 +14,8 @@ import com.intelliflow.model.ProjectProgressReport;
 import com.intelliflow.model.Task;
 import com.intelliflow.model.User;
 import com.intelliflow.model.ActivityLog;
+import com.intelliflow.model.TeamMemberWorkload;
+import com.intelliflow.util.WorkloadUtil;
 import com.intelliflow.ui.MainFrame;
 import com.intelliflow.ui.ThemeManager;
 import com.intelliflow.ui.components.EmptyStatePanel;
@@ -937,44 +939,46 @@ public class ProjectManagementView extends BaseView {
 
         tabbedPane.addTab("Tasks", tasksTab);
 
-        // -- Tab 3: Team --
-        JPanel teamTab = new JPanel(new BorderLayout(10, 10));
+        // -- Tab 3: Team & Workload --
+        JPanel teamTab = new JPanel(new BorderLayout(10, 15));
         teamTab.setOpaque(false);
         teamTab.setBorder(new EmptyBorder(15, 15, 15, 15));
 
+        JPanel teamHeaderPanel = new JPanel(new BorderLayout());
+        teamHeaderPanel.setOpaque(false);
+        JLabel teamTitle = new JLabel("Project Team Workload & Performance");
+        teamTitle.setFont(ThemeManager.FONT_SUBTITLE);
+        teamTitle.setForeground(ThemeManager.COLOR_TEXT_PRIMARY);
+        teamHeaderPanel.add(teamTitle, BorderLayout.WEST);
+        teamTab.add(teamHeaderPanel, BorderLayout.NORTH);
+
         DefaultTableModel teamModel = new DefaultTableModel(
-                new Object[]{"Full Name", "Username", "Email", "Role", "Tasks in Project"}, 0
+                new Object[]{"Employee Name", "Assigned", "Completed", "In Progress", "Overdue", "Completion %", "Workload Status"}, 0
         );
         ModernTable teamTable = new ModernTable();
         teamTable.setPlaceholderText("No team members assigned to tasks in this project.");
         teamTable.setModel(teamModel);
 
-        // Calculate unique assignees and count tasks
-        Set<Integer> assignedUserIds = pTasks.stream()
-                .filter(t -> t.getAssignedEmployeeId() != null)
-                .map(Task::getAssignedEmployeeId)
-                .collect(Collectors.toSet());
+        LocalDate today = LocalDate.now();
+        List<TeamMemberWorkload> memberWorkloads = WorkloadUtil.calculateTeamWorkloadForProject(allUsersList, pTasks, today);
 
-        for (int userId : assignedUserIds) {
-            Optional<User> uOpt = allUsersList.stream().filter(u -> u.getId() == userId).findFirst();
-            if (uOpt.isPresent()) {
-                User teamMember = uOpt.get();
-                long count = pTasks.stream().filter(t -> t.getAssignedEmployeeId() != null && t.getAssignedEmployeeId() == userId).count();
-                teamModel.addRow(new Object[]{
-                        teamMember.getFullName(),
-                        teamMember.getUsername(),
-                        teamMember.getEmail(),
-                        teamMember.getRole().toString(),
-                        count
-                });
-            }
+        for (TeamMemberWorkload mw : memberWorkloads) {
+            teamModel.addRow(new Object[]{
+                    mw.getEmployeeName(),
+                    mw.getAssignedTasks() + " assigned",
+                    mw.getCompletedTasks() + " completed",
+                    mw.getInProgressTasks() + " in progress",
+                    mw.getOverdueTasks() > 0 ? "⛔ " + mw.getOverdueTasks() + " overdue" : "0 overdue",
+                    mw.getCompletionPercentage() + "%",
+                    mw.getWorkloadIndicator()
+            });
         }
 
         JScrollPane teamScroll = new JScrollPane(teamTable);
         teamScroll.setBorder(BorderFactory.createEmptyBorder());
         teamTab.add(teamScroll, BorderLayout.CENTER);
 
-        tabbedPane.addTab("Team", teamTab);
+        tabbedPane.addTab("Team & Workload", teamTab);
 
         // -- Tab 4: Activity --
         JPanel activityTab = new JPanel(new BorderLayout(10, 10));

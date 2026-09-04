@@ -7,6 +7,7 @@ import com.intelliflow.enums.ProjectStatus;
 import com.intelliflow.enums.ProjectHealth;
 import com.intelliflow.util.ProjectHealthUtil;
 import com.intelliflow.util.AlertUtil;
+import com.intelliflow.util.WorkloadUtil;
 import com.intelliflow.model.*;
 import com.intelliflow.ui.MainFrame;
 import com.intelliflow.ui.ThemeManager;
@@ -346,7 +347,7 @@ public class DashboardView extends BaseView {
         sectionsGrid.add(progressCard);
 
         // Team Overview
-        managerTeamModel = new DefaultTableModel(new Object[]{"Employee Name", "Total Tasks", "Completed Tasks", "Workload"}, 0);
+        managerTeamModel = new DefaultTableModel(new Object[]{"Employee Name", "Assigned", "Completed", "In Progress", "Overdue", "Completion %", "Workload Status"}, 0);
         ModernTable managerTeamTable = new ModernTable();
         managerTeamTable.setModel(managerTeamModel);
         managerTeamTable.setPlaceholderText("No team activity records.");
@@ -679,15 +680,17 @@ public class DashboardView extends BaseView {
                             }).collect(Collectors.toList());
 
                     // Employee Workloads
-                    List<EmployeePerformanceReport> perf = mainFrame.getReportService().getEmployeePerformanceReports();
-                    mgrTeamRows = perf.stream()
-                            .filter(r -> r.getTotalTasks() > 0) // Filter only employees with assignments
-                            .limit(5)
-                            .map(r -> new String[]{
-                                    r.getEmployeeName(),
-                                    String.valueOf(r.getTotalTasks()),
-                                    String.valueOf(r.getCompletedTasks()),
-                                    r.getCompletionRate() + "%"
+                    List<TeamMemberWorkload> workloads = WorkloadUtil.calculateTeamWorkloadForProject(allUsers, teamTasks, LocalDate.now());
+                    mgrTeamRows = workloads.stream()
+                            .limit(10)
+                            .map(w -> new String[]{
+                                    w.getEmployeeName(),
+                                    w.getAssignedTasks() + " assigned",
+                                    w.getCompletedTasks() + " completed",
+                                    w.getInProgressTasks() + " in progress",
+                                    w.getOverdueTasks() > 0 ? "⛔ " + w.getOverdueTasks() + " overdue" : "0 overdue",
+                                    w.getCompletionPercentage() + "%",
+                                    w.getWorkloadIndicator()
                             }).collect(Collectors.toList());
 
                 } else { // Role.EMPLOYEE

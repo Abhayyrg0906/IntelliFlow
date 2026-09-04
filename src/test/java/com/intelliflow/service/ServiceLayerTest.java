@@ -9,6 +9,7 @@ import com.intelliflow.service.impl.*;
 import com.intelliflow.service.interfaces.*;
 import com.intelliflow.util.PasswordUtil;
 import com.intelliflow.util.ValidationUtil;
+import com.intelliflow.util.WorkloadUtil;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -1436,5 +1437,150 @@ public class ServiceLayerTest {
         assertTrue(progressVisual.contains("78%"));
         assertTrue(progressVisual.contains("█"));
         assertTrue(progressVisual.contains("░"));
+    }
+
+    // 17. Team Workload Management & Assignment Authorization Tests (Phase 8)
+    @Test
+    public void testTeamWorkloadManagementAndAuthorization() throws DatabaseException, ValidationException {
+        UserDAO uDAO = new InMemoryUserDAO();
+        ProjectDAO pDAO = new InMemoryProjectDAO();
+        TaskDAO tDAO = new InMemoryTaskDAO();
+        NotificationDAO nDAO = new InMemoryNotificationDAO();
+        ActivityLogDAO lDAO = new InMemoryActivityLogDAO();
+
+        UserService uService = new UserServiceImpl(uDAO, lDAO);
+        ProjectService pService = new ProjectServiceImpl(pDAO, lDAO);
+        TaskService tService = new TaskServiceImpl(tDAO, pDAO, uDAO, nDAO, lDAO);
+
+        LocalDate today = LocalDate.of(2026, 9, 5);
+
+        // 1. Setup Users (Admin, 2 Managers, 2 Employees)
+        User admin = uService.register(new User(0, "adminUser", "admin@test.com", "", Role.ADMIN, "Admin User", LocalDateTime.now()), "Pass123!@#");
+        User mgr1 = uService.register(new User(0, "mgr1", "mgr1@test.com", "", Role.MANAGER, "Manager One", LocalDateTime.now()), "Pass123!@#");
+        User mgr2 = uService.register(new User(0, "mgr2", "mgr2@test.com", "", Role.MANAGER, "Manager Two", LocalDateTime.now()), "Pass123!@#");
+        User priya = uService.register(new User(0, "priya", "priya@test.com", "", Role.EMPLOYEE, "Priya", LocalDateTime.now()), "Pass123!@#");
+        User rahul = uService.register(new User(0, "rahul", "rahul@test.com", "", Role.EMPLOYEE, "Rahul", LocalDateTime.now()), "Pass123!@#");
+
+        // 2. Setup Projects
+        UserSession.getInstance().startSession(admin);
+        Project p1 = new Project();
+        p1.setName("IntelliFlow");
+        p1.setManagerId(mgr1.getId());
+        p1.setStartDate(today.minusDays(10));
+        p1.setDeadline(today.plusDays(30));
+        p1.setStatus(ProjectStatus.ACTIVE);
+        p1 = pService.createProject(p1);
+
+        Project p2 = new Project();
+        p2.setName("Finance App");
+        p2.setManagerId(mgr2.getId());
+        p2.setStartDate(today.minusDays(10));
+        p2.setDeadline(today.plusDays(30));
+        p2.setStatus(ProjectStatus.ACTIVE);
+        p2 = pService.createProject(p2);
+
+        // 3. Workload Calculation Test for Priya:
+        // 8 assigned, 6 completed, 1 in-progress, 1 overdue -> 75% completion
+        UserSession.getInstance().startSession(mgr1);
+        List<Task> priyaTasks = new ArrayList<>();
+        // 6 Completed Tasks
+        for (int i = 1; i <= 6; i++) {
+            Task t = new Task();
+            t.setProjectId(p1.getId());
+            t.setName("Completed Task " + i);
+            t.setStatus(TaskStatus.COMPLETED);
+            t.setPriority(TaskPriority.MEDIUM);
+            t.setAssignedEmployeeId(priya.getId());
+            t.setDeadline(today.minusDays(5));
+            priyaTasks.add(tService.createTask(t));
+        }
+        // 1 In Progress (due in future)
+        Task tInProgress = new Task();
+        tInProgress.setProjectId(p1.getId());
+        tInProgress.setName("Active Task");
+        tInProgress.setStatus(TaskStatus.IN_PROGRESS);
+        tInProgress.setPriority(TaskPriority.HIGH);
+        tInProgress.setAssignedEmployeeId(priya.getId());
+        tInProgress.setDeadline(today.plusDays(5));
+        priyaTasks.add(tService.createTask(tInProgress));
+
+        // 1 Overdue Task
+        Task tOverdue = new Task();
+        tOverdue.setProjectId(p1.getId());
+        tOverdue.setName("Overdue Task");
+        tOverdue.setStatus(TaskStatus.TO_DO);
+        tOverdue.setPriority(TaskPriority.CRITICAL);
+        tOverdue.setAssignedEmployeeId(priya.getId());
+        tOverdue.setDeadline(today.minusDays(2));
+        priyaTasks.add(tService.createTask(tOverdue));
+
+        TeamMemberWorkload priyaWorkload = WorkloadUtil.calculateMemberWorkload(priya, priyaTasks, today);
+        assertEquals(8, priyaWorkload.getAssignedTasks());
+        assertEquals(6, priyaWorkload.getCompletedTasks());
+        assertEquals(2, priyaWorkload.getInProgressTasks());
+        assertEquals(1, priyaWorkload.getOverdueTasks());
+        assertEquals(75.0, priyaWorkload.getCompletionPercentage()); // 6/8 = 75.0%
+        assertEquals("🟠 HEAVY", priyaWorkload.getWorkloadIndicator()); // 1 overdue -> HEAVY
+
+        // 4. Team Workload in Project 1
+        List<TeamMemberWorkload> teamWorkloads = WorkloadUtil.calculateTeamWorkloadForProject(
+                List.of(priya, rahul), priyaTasks, today
+        );
+        assertEquals(1, teamWorkloads.size());
+        assertEquals("Priya", teamWorkloads.get(0).getEmployeeName());
+
+        // 5. Authorization: Avoid assigning tasks to unauthorized users (non-employees / managers / admins)
+        Task invalidAssignTask = new Task();
+        invalidAssignTask.setProjectId(p1.getId());
+        invalidAssignTask.setName("Invalid Assignee Task");
+        invalidAssignTask.setStatus(TaskStatus.TO_DO);
+        invalidAssignTask.setPriority(TaskPriority.LOW);
+        invalidAssignTask.setAssignedEmployeeId(mgr2.getId()); // mgr2 is Role.MANAGER, not EMPLOYEE
+        assertThrows(ValidationException.class, () -> tService.createTask(invalidAssignTask));
+
+        // Assign to non-existent user id
+        invalidAssignTask.setAssignedEmployeeId(9999);
+        assertThrows(ValidationException.class, () -> tService.createTask(invalidAssignTask));
+
+        // 6. Authorization: Do not give Employees Manager permissions
+        UserSession.getInstance().startSession(priya); // Employee session
+        Task empCreateAttempt = new Task();
+        empCreateAttempt.setProjectId(p1.getId());
+        empCreateAttempt.setName("Employee Creating Task");
+        empCreateAttempt.setStatus(TaskStatus.TO_DO);
+        empCreateAttempt.setPriority(TaskPriority.LOW);
+        empCreateAttempt.setAssignedEmployeeId(priya.getId());
+        assertThrows(UnauthorizedException.class, () -> tService.createTask(empCreateAttempt));
+
+        assertThrows(UnauthorizedException.class, () -> tService.deleteTask(tInProgress.getId()));
+
+        // Employee cannot update status of a task assigned to another employee
+        Task rahulTask = new Task();
+        rahulTask.setProjectId(p1.getId());
+        rahulTask.setName("Rahul Task");
+        rahulTask.setStatus(TaskStatus.TO_DO);
+        rahulTask.setPriority(TaskPriority.MEDIUM);
+        rahulTask.setAssignedEmployeeId(rahul.getId());
+
+        UserSession.getInstance().startSession(mgr1);
+        Task createdRahulTask = tService.createTask(rahulTask);
+
+        UserSession.getInstance().startSession(priya); // Priya tries to update Rahul's task status
+        assertThrows(UnauthorizedException.class, () -> tService.updateTaskStatus(createdRahulTask.getId(), TaskStatus.IN_PROGRESS));
+
+        // 7. Authorization: Manager 1 cannot manage or delete tasks in Manager 2's project
+        UserSession.getInstance().startSession(mgr2);
+        Task p2Task = new Task();
+        p2Task.setProjectId(p2.getId());
+        p2Task.setName("Finance Task");
+        p2Task.setStatus(TaskStatus.TO_DO);
+        p2Task.setPriority(TaskPriority.HIGH);
+        p2Task.setAssignedEmployeeId(rahul.getId());
+        Task createdP2Task = tService.createTask(p2Task);
+
+        UserSession.getInstance().startSession(mgr1); // Manager 1 tries to edit or delete Manager 2's task
+        assertThrows(UnauthorizedException.class, () -> tService.deleteTask(createdP2Task.getId()));
+        createdP2Task.setName("Hacked Task Name");
+        assertThrows(UnauthorizedException.class, () -> tService.updateTask(createdP2Task));
     }
 }

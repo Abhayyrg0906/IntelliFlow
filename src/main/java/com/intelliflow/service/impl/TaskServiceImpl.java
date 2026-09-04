@@ -52,10 +52,20 @@ public class TaskServiceImpl implements TaskService {
         checkManagerOrAdmin();
         validateTaskDetails(task);
 
+        User currentUser = UserSession.getInstance().getCurrentUser();
+        if (currentUser != null && currentUser.getRole() == Role.MANAGER) {
+            Optional<Project> projectOpt = projectDAO.findById(task.getProjectId());
+            if (projectOpt.isPresent()) {
+                Project project = projectOpt.get();
+                if (project.getManagerId() != null && !project.getManagerId().equals(currentUser.getId())) {
+                    throw new UnauthorizedException("Access Denied: Managers can only manage tasks for projects they manage.");
+                }
+            }
+        }
+
         Task created = taskDAO.create(task);
 
         // Audit Log
-        User currentUser = UserSession.getInstance().getCurrentUser();
         String actor = currentUser != null ? currentUser.getFullName() : "System";
         ActivityLog audit = new ActivityLog();
         audit.setUserId(currentUser != null ? currentUser.getId() : null);
@@ -83,6 +93,17 @@ public class TaskServiceImpl implements TaskService {
         checkManagerOrAdmin();
         validateTaskDetails(task);
 
+        User currentUser = UserSession.getInstance().getCurrentUser();
+        if (currentUser != null && currentUser.getRole() == Role.MANAGER) {
+            Optional<Project> projectOpt = projectDAO.findById(task.getProjectId());
+            if (projectOpt.isPresent()) {
+                Project project = projectOpt.get();
+                if (project.getManagerId() != null && !project.getManagerId().equals(currentUser.getId())) {
+                    throw new UnauthorizedException("Access Denied: Managers can only manage tasks for projects they manage.");
+                }
+            }
+        }
+
         // Fetch original to check for changes
         Optional<Task> originalOpt = taskDAO.findById(task.getId());
         if (originalOpt.isEmpty()) {
@@ -91,8 +112,6 @@ public class TaskServiceImpl implements TaskService {
         Task original = originalOpt.get();
 
         taskDAO.update(task);
-
-        User currentUser = UserSession.getInstance().getCurrentUser();
 
         // 1. If assignment changed
         if (task.getAssignedEmployeeId() != null && 
@@ -207,9 +226,19 @@ public class TaskServiceImpl implements TaskService {
         checkManagerOrAdmin();
         Optional<Task> taskOpt = taskDAO.findById(taskId);
         if (taskOpt.isPresent()) {
+            User currentUser = UserSession.getInstance().getCurrentUser();
+            if (currentUser != null && currentUser.getRole() == Role.MANAGER) {
+                Optional<Project> projectOpt = projectDAO.findById(taskOpt.get().getProjectId());
+                if (projectOpt.isPresent()) {
+                    Project project = projectOpt.get();
+                    if (project.getManagerId() != null && !project.getManagerId().equals(currentUser.getId())) {
+                        throw new UnauthorizedException("Access Denied: Managers can only delete tasks for projects they manage.");
+                    }
+                }
+            }
+
             taskDAO.delete(taskId);
 
-            User currentUser = UserSession.getInstance().getCurrentUser();
             ActivityLog audit = new ActivityLog();
             audit.setUserId(currentUser != null ? currentUser.getId() : null);
             audit.setAction("TASK_DELETE");
