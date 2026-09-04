@@ -1583,4 +1583,137 @@ public class ServiceLayerTest {
         createdP2Task.setName("Hacked Task Name");
         assertThrows(UnauthorizedException.class, () -> tService.updateTask(createdP2Task));
     }
+
+    @Test
+    public void testKanbanWorkflowTransitionsAndValidation() throws Exception {
+        UserDAO uDAO = new InMemoryUserDAO();
+        ProjectDAO pDAO = new InMemoryProjectDAO();
+        TaskDAO tDAO = new InMemoryTaskDAO();
+        NotificationDAO nDAO = new InMemoryNotificationDAO();
+        ActivityLogDAO lDAO = new InMemoryActivityLogDAO();
+
+        UserService uService = new UserServiceImpl(uDAO, lDAO);
+        ProjectService pService = new ProjectServiceImpl(pDAO, lDAO);
+        TaskService tService = new TaskServiceImpl(tDAO, pDAO, uDAO, nDAO, lDAO);
+
+        LocalDate today = LocalDate.of(2026, 9, 5);
+
+        // 1. Setup Users (Admin, Manager, 2 Employees)
+        User admin = uService.register(new User(0, "kanbanAdmin", "admin@kanban.com", "", Role.ADMIN, "Kanban Admin", LocalDateTime.now()), "Pass123!@#");
+        User mgr = uService.register(new User(0, "kanbanMgr", "mgr@kanban.com", "", Role.MANAGER, "Kanban Manager", LocalDateTime.now()), "Pass123!@#");
+        User dev1 = uService.register(new User(0, "kanbanDev1", "dev1@kanban.com", "", Role.EMPLOYEE, "Dev One", LocalDateTime.now()), "Pass123!@#");
+        User dev2 = uService.register(new User(0, "kanbanDev2", "dev2@kanban.com", "", Role.EMPLOYEE, "Dev Two", LocalDateTime.now()), "Pass123!@#");
+
+        // 2. Setup Project
+        UserSession.getInstance().startSession(mgr);
+        Project project = new Project();
+        project.setName("Kanban Project");
+        project.setManagerId(mgr.getId());
+        project.setStartDate(today.minusDays(5));
+        project.setDeadline(today.plusDays(30));
+        project.setStatus(ProjectStatus.ACTIVE);
+        project = pService.createProject(project);
+
+        // 3. Create a Task in TO_DO assigned to dev1
+        Task task1 = new Task();
+        task1.setProjectId(project.getId());
+        task1.setName("Feature Auth");
+        task1.setStatus(TaskStatus.TO_DO);
+        task1.setPriority(TaskPriority.HIGH);
+        task1.setAssignedEmployeeId(dev1.getId());
+        task1.setDeadline(today.plusDays(10));
+        task1 = tService.createTask(task1);
+
+        // 4. Test Invalid Transitions from TO_DO
+        UserSession.getInstance().startSession(dev1);
+        final int taskId = task1.getId();
+        // TO_DO -> TESTING is invalid
+        ValidationException ex1 = assertThrows(ValidationException.class, () -> tService.updateTaskStatus(taskId, TaskStatus.TESTING));
+        assertTrue(ex1.getMessage().contains("must move to IN_PROGRESS"));
+
+        // TO_DO -> COMPLETED is invalid
+        ValidationException ex2 = assertThrows(ValidationException.class, () -> tService.updateTaskStatus(taskId, TaskStatus.COMPLETED));
+        assertTrue(ex2.getMessage().contains("must move to IN_PROGRESS"));
+
+        // 5. Test Valid Transition: TO_DO -> IN_PROGRESS
+        tService.updateTaskStatus(taskId, TaskStatus.IN_PROGRESS);
+        Task updatedT1 = tService.getTaskById(taskId).orElseThrow();
+        assertEquals(TaskStatus.IN_PROGRESS, updatedT1.getStatus());
+
+        // Verify Manager received a notification from Employee transition
+        List<Notification> mgrNotifs = nDAO.findByUserId(mgr.getId());
+        assertTrue(mgrNotifs.stream().anyMatch(n -> n.getMessage().contains("Feature Auth") && n.getMessage().contains("IN_PROGRESS")));
+
+        // Verify ActivityLog was created
+        List<ActivityLog> logs = lDAO.findAll();
+        assertTrue(logs.stream().anyMatch(l -> "TASK_STATUS_CHANGE".equals(l.getAction()) && l.getDescription().contains("Feature Auth moved to IN_PROGRESS")));
+
+        // 6. Test Invalid Transition from IN_PROGRESS: IN_PROGRESS -> COMPLETED
+        assertThrows(ValidationException.class, () -> tService.updateTaskStatus(taskId, TaskStatus.COMPLETED));
+
+        // 7. Test Valid Transition: IN_PROGRESS -> TESTING
+        tService.updateTaskStatus(taskId, TaskStatus.TESTING);
+        Task inTesting = tService.getTaskById(taskId).orElseThrow();
+        assertEquals(TaskStatus.TESTING, inTesting.getStatus());
+
+        // 8. Test Testing Failure (Rework): TESTING -> IN_PROGRESS
+        tService.updateTaskStatus(taskId, TaskStatus.IN_PROGRESS);
+        Task reworked = tService.getTaskById(taskId).orElseThrow();
+        assertEquals(TaskStatus.IN_PROGRESS, reworked.getStatus());
+
+        // Send back to testing
+        tService.updateTaskStatus(taskId, TaskStatus.TESTING);
+
+        // 9. Test Valid Transition: TESTING -> COMPLETED (Pass testing)
+        tService.updateTaskStatus(taskId, TaskStatus.COMPLETED);
+        Task completedTask = tService.getTaskById(taskId).orElseThrow();
+        assertEquals(TaskStatus.COMPLETED, completedTask.getStatus());
+
+        // 10. Test Reopening Restrictions: Employee cannot reopen completed task
+        assertThrows(ValidationException.class, () -> tService.updateTaskStatus(taskId, TaskStatus.IN_PROGRESS));
+
+        // 11. Test Manager CAN reopen completed task
+        UserSession.getInstance().startSession(mgr);
+        tService.updateTaskStatus(taskId, TaskStatus.IN_PROGRESS);
+        Task reopenedTask = tService.getTaskById(taskId).orElseThrow();
+        assertEquals(TaskStatus.IN_PROGRESS, reopenedTask.getStatus());
+
+        // Verify Assigned Employee received notification that Manager reopened task
+        List<Notification> dev1Notifs = nDAO.findByUserId(dev1.getId());
+        assertTrue(dev1Notifs.stream().anyMatch(n -> n.getMessage().contains("Feature Auth") && n.getMessage().contains("IN_PROGRESS")));
+
+        // 12. Test Blocked Status: Any state can transition to/from BLOCKED
+        tService.updateTaskStatus(taskId, TaskStatus.BLOCKED);
+        assertEquals(TaskStatus.BLOCKED, tService.getTaskById(taskId).orElseThrow().getStatus());
+        tService.updateTaskStatus(taskId, TaskStatus.IN_PROGRESS);
+        assertEquals(TaskStatus.IN_PROGRESS, tService.getTaskById(taskId).orElseThrow().getStatus());
+
+        // 13. Test Employee Authorization: Dev2 cannot move Dev1's task
+        UserSession.getInstance().startSession(dev2);
+        assertThrows(UnauthorizedException.class, () -> tService.updateTaskStatus(taskId, TaskStatus.TESTING));
+
+        // 14. Priority & Deadline Ordering Preservation in Kanban Columns
+        UserSession.getInstance().startSession(mgr);
+        Task lowTask = new Task(0, project.getId(), "Low Task", "", dev1.getId(), TaskPriority.LOW, today.plusDays(2), TaskStatus.TO_DO, LocalDateTime.now(), LocalDateTime.now());
+        Task critTaskLate = new Task(0, project.getId(), "Critical Late", "", dev1.getId(), TaskPriority.CRITICAL, today.plusDays(10), TaskStatus.TO_DO, LocalDateTime.now(), LocalDateTime.now());
+        Task critTaskEarly = new Task(0, project.getId(), "Critical Early", "", dev1.getId(), TaskPriority.CRITICAL, today.plusDays(3), TaskStatus.TO_DO, LocalDateTime.now(), LocalDateTime.now());
+        Task highTaskNoDeadline = new Task(0, project.getId(), "High No DL", "", dev1.getId(), TaskPriority.HIGH, null, TaskStatus.TO_DO, LocalDateTime.now(), LocalDateTime.now());
+
+        tService.createTask(lowTask);
+        tService.createTask(critTaskLate);
+        tService.createTask(critTaskEarly);
+        tService.createTask(highTaskNoDeadline);
+
+        List<Task> todoTasks = tService.getAllTasks().stream()
+                .filter(t -> t.getStatus() == TaskStatus.TO_DO)
+                .sorted(com.intelliflow.util.TaskSorter.RECOMMENDED_COMPARATOR)
+                .toList();
+
+        assertEquals(4, todoTasks.size());
+        assertEquals("Critical Early", todoTasks.get(0).getName());
+        assertEquals("Critical Late", todoTasks.get(1).getName());
+        assertEquals("High No DL", todoTasks.get(2).getName());
+        assertEquals("Low Task", todoTasks.get(3).getName());
+    }
 }
+

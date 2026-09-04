@@ -23,6 +23,10 @@ import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import javax.swing.table.DefaultTableModel;
 import java.awt.*;
+import java.awt.datatransfer.DataFlavor;
+import java.awt.datatransfer.StringSelection;
+import java.awt.datatransfer.Transferable;
+import java.awt.dnd.*;
 import java.awt.event.ActionListener;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
@@ -121,10 +125,11 @@ public class TaskManagementView extends BaseView {
         titleLabel.setForeground(ThemeManager.COLOR_TEXT_PRIMARY);
         actionBar.add(titleLabel, BorderLayout.WEST);
 
-        // Buttons Panel (Right side)
+        // Action Buttons Row
         JPanel buttonsPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 0));
         buttonsPanel.setOpaque(false);
 
+        // View Mode Switch Button
         viewToggleBtn = new JButton("📋 Show Table View");
         viewToggleBtn.setBackground(ThemeManager.COLOR_CARD);
         viewToggleBtn.setForeground(ThemeManager.COLOR_TEXT_PRIMARY);
@@ -139,7 +144,7 @@ public class TaskManagementView extends BaseView {
         createButton.setCursor(new Cursor(Cursor.HAND_CURSOR));
         createButton.addActionListener(e -> showTaskForm(null));
 
-        editButton = new JButton("📝 Edit Task");
+        editButton = new JButton("✏️ Edit Task");
         editButton.setBackground(ThemeManager.COLOR_CARD);
         editButton.setForeground(ThemeManager.COLOR_TEXT_PRIMARY);
         editButton.setFont(ThemeManager.FONT_BOLD_SMALL);
@@ -278,7 +283,7 @@ public class TaskManagementView extends BaseView {
 
         legendPanel.add(new PillBadge("COMPLETED", ThemeManager.COLOR_SUCCESS, Color.WHITE, 8));
 
-        JLabel suffixLabel = new JLabel("   (Blocked tasks 🚫 can resolve to any status)");
+        JLabel suffixLabel = new JLabel("   (Drag & drop tasks between columns or use card action buttons)");
         suffixLabel.setFont(ThemeManager.FONT_SMALL);
         suffixLabel.setForeground(ThemeManager.COLOR_TEXT_MUTED);
         legendPanel.add(suffixLabel);
@@ -325,11 +330,11 @@ public class TaskManagementView extends BaseView {
         completedCountBadge = new CountBadge();
         blockedCountBadge = new CountBadge();
 
-        kanbanBoardPanel.add(createKanbanColumn("TO DO", new Color(148, 163, 184), todoCountBadge, todoColPanel));
-        kanbanBoardPanel.add(createKanbanColumn("IN PROGRESS", new Color(59, 130, 246), progressCountBadge, progressColPanel));
-        kanbanBoardPanel.add(createKanbanColumn("TESTING", new Color(245, 158, 11), testingCountBadge, testingColPanel));
-        kanbanBoardPanel.add(createKanbanColumn("COMPLETED", ThemeManager.COLOR_SUCCESS, completedCountBadge, completedColPanel));
-        kanbanBoardPanel.add(createKanbanColumn("BLOCKED", ThemeManager.COLOR_DANGER, blockedCountBadge, blockedColPanel));
+        kanbanBoardPanel.add(createKanbanColumn("TO DO", new Color(148, 163, 184), todoCountBadge, todoColPanel, TaskStatus.TO_DO));
+        kanbanBoardPanel.add(createKanbanColumn("IN PROGRESS", new Color(59, 130, 246), progressCountBadge, progressColPanel, TaskStatus.IN_PROGRESS));
+        kanbanBoardPanel.add(createKanbanColumn("TESTING", new Color(245, 158, 11), testingCountBadge, testingColPanel, TaskStatus.TESTING));
+        kanbanBoardPanel.add(createKanbanColumn("COMPLETED", ThemeManager.COLOR_SUCCESS, completedCountBadge, completedColPanel, TaskStatus.COMPLETED));
+        kanbanBoardPanel.add(createKanbanColumn("BLOCKED", ThemeManager.COLOR_DANGER, blockedCountBadge, blockedColPanel, TaskStatus.BLOCKED));
 
         // Initialize Summary Panel
         summaryPanel = new RoundedPanel(10, ThemeManager.COLOR_CARD);
@@ -448,7 +453,7 @@ public class TaskManagementView extends BaseView {
         return headerPanel;
     }
 
-    private JPanel createKanbanColumn(String title, Color accentColor, CountBadge countBadge, JPanel cardsPanel) {
+    private JPanel createKanbanColumn(String title, Color accentColor, CountBadge countBadge, JPanel cardsPanel, TaskStatus columnStatus) {
         RoundedPanel wrapper = new RoundedPanel(12, ThemeManager.COLOR_CARD);
         wrapper.setDrawBorder(true);
         wrapper.setBorderColor(ThemeManager.COLOR_BORDER);
@@ -468,7 +473,63 @@ public class TaskManagementView extends BaseView {
         colScroll.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
 
         wrapper.add(colScroll, BorderLayout.CENTER);
+
+        // Setup Drag & Drop Target for this Kanban Column
+        setupColumnDropTarget(wrapper, wrapper, accentColor, columnStatus);
+        setupColumnDropTarget(colScroll, wrapper, accentColor, columnStatus);
+        setupColumnDropTarget(contentScrollWrapper, wrapper, accentColor, columnStatus);
+        setupColumnDropTarget(cardsPanel, wrapper, accentColor, columnStatus);
+
         return wrapper;
+    }
+
+    private void setupColumnDropTarget(JComponent comp, RoundedPanel wrapper, Color accentColor, TaskStatus columnStatus) {
+        new DropTarget(comp, DnDConstants.ACTION_MOVE, new DropTargetAdapter() {
+            @Override
+            public void dragEnter(DropTargetDragEvent dtde) {
+                if (dtde.isDataFlavorSupported(DataFlavor.stringFlavor)) {
+                    dtde.acceptDrag(DnDConstants.ACTION_MOVE);
+                    wrapper.setBorderColor(accentColor);
+                    wrapper.repaint();
+                } else {
+                    dtde.rejectDrag();
+                }
+            }
+
+            @Override
+            public void dragOver(DropTargetDragEvent dtde) {
+                if (dtde.isDataFlavorSupported(DataFlavor.stringFlavor)) {
+                    dtde.acceptDrag(DnDConstants.ACTION_MOVE);
+                } else {
+                    dtde.rejectDrag();
+                }
+            }
+
+            @Override
+            public void dragExit(DropTargetEvent dte) {
+                wrapper.setBorderColor(ThemeManager.COLOR_BORDER);
+                wrapper.repaint();
+            }
+
+            @Override
+            public void drop(DropTargetDropEvent dtde) {
+                wrapper.setBorderColor(ThemeManager.COLOR_BORDER);
+                wrapper.repaint();
+                try {
+                    if (dtde.isDataFlavorSupported(DataFlavor.stringFlavor)) {
+                        dtde.acceptDrop(DnDConstants.ACTION_MOVE);
+                        String data = (String) dtde.getTransferable().getTransferData(DataFlavor.stringFlavor);
+                        int taskId = Integer.parseInt(data.trim());
+                        dtde.dropComplete(true);
+                        handleTaskMove(taskId, columnStatus);
+                    } else {
+                        dtde.rejectDrop();
+                    }
+                } catch (Exception ex) {
+                    dtde.dropComplete(false);
+                }
+            }
+        }, true, null);
     }
 
     private void toggleViewMode() {
@@ -879,7 +940,24 @@ public class TaskManagementView extends BaseView {
         card.setCursor(new Cursor(Cursor.HAND_CURSOR));
 
         User currentUser = UserSession.getInstance().getCurrentUser();
+        boolean isManagerOrAdmin = currentUser != null && (currentUser.getRole() == Role.ADMIN || currentUser.getRole() == Role.MANAGER);
+        boolean isAssignedEmployee = currentUser != null && currentUser.getRole() == Role.EMPLOYEE && t.getAssignedEmployeeId() != null && t.getAssignedEmployeeId().intValue() == currentUser.getId();
+        boolean isAuthorizedToMove = isManagerOrAdmin || isAssignedEmployee;
 
+        // Setup Drag-and-Drop source for task card
+        card.setTransferHandler(new TransferHandler() {
+            @Override
+            public int getSourceActions(JComponent c) {
+                return isAuthorizedToMove ? MOVE : NONE;
+            }
+
+            @Override
+            protected Transferable createTransferable(JComponent c) {
+                return new StringSelection(String.valueOf(t.getId()));
+            }
+        });
+
+        // Mouse Listeners for hover, selection, double-click, and drag gesture
         card.addMouseListener(new MouseAdapter() {
             @Override
             public void mouseEntered(MouseEvent e) {
@@ -903,10 +981,29 @@ public class TaskManagementView extends BaseView {
                 updateTaskCardSelectionVisuals();
                 
                 if (e.getClickCount() == 2) {
-                    if (currentUser != null && (currentUser.getRole() == Role.ADMIN || currentUser.getRole() == Role.MANAGER)) {
+                    if (isManagerOrAdmin) {
                         showTaskForm(t);
                     } else {
                         showTaskDetails(t);
+                    }
+                }
+            }
+        });
+
+        card.addMouseMotionListener(new MouseAdapter() {
+            private Point pressPoint;
+
+            @Override
+            public void mouseMoved(MouseEvent e) {
+                pressPoint = e.getPoint();
+            }
+
+            @Override
+            public void mouseDragged(MouseEvent e) {
+                if (isAuthorizedToMove && pressPoint != null && (Math.abs(e.getX() - pressPoint.x) > 4 || Math.abs(e.getY() - pressPoint.y) > 4)) {
+                    TransferHandler th = card.getTransferHandler();
+                    if (th != null) {
+                        th.exportAsDrag(card, e, TransferHandler.MOVE);
                     }
                 }
             }
@@ -1016,9 +1113,6 @@ public class TaskManagementView extends BaseView {
         JButton viewBtn = createCardActionButton("👁️", "View details", e -> showTaskDetails(t));
         actionsRow.add(viewBtn);
 
-        boolean isManagerOrAdmin = currentUser != null && (currentUser.getRole() == Role.ADMIN || currentUser.getRole() == Role.MANAGER);
-        boolean isAssignedEmployee = currentUser != null && currentUser.getRole() == Role.EMPLOYEE && t.getAssignedEmployeeId() != null && t.getAssignedEmployeeId() == currentUser.getId();
-
         if (isManagerOrAdmin) {
             // ✏️ Edit button
             JButton editBtn = createCardActionButton("✏️", "Edit task", e -> showTaskForm(t));
@@ -1032,9 +1126,37 @@ public class TaskManagementView extends BaseView {
             actionsRow.add(deleteBtn);
         }
 
-        // 🔄 Status transition (Manager/Admin OR assigned Employee)
-        if (isManagerOrAdmin || isAssignedEmployee) {
-            JButton statusBtn = createCardActionButton("🔄", "Update status", e -> showStatusTransitionMenu(t, (JButton) e.getSource()));
+        // Quick Stage Advance & Workflow Actions (Authorized users only)
+        if (isAuthorizedToMove) {
+            switch (t.getStatus()) {
+                case TO_DO -> {
+                    JButton startBtn = createCardActionButton("▶️", "Start working (Move to IN PROGRESS)", e -> handleTaskMove(t.getId(), TaskStatus.IN_PROGRESS));
+                    actionsRow.add(startBtn);
+                }
+                case IN_PROGRESS -> {
+                    JButton testBtn = createCardActionButton("🧪", "Send to testing (Move to TESTING)", e -> handleTaskMove(t.getId(), TaskStatus.TESTING));
+                    actionsRow.add(testBtn);
+                }
+                case TESTING -> {
+                    JButton passBtn = createCardActionButton("✅", "Pass test (Move to COMPLETED)", e -> handleTaskMove(t.getId(), TaskStatus.COMPLETED));
+                    actionsRow.add(passBtn);
+                    JButton failBtn = createCardActionButton("↩️", "Fail test (Return to IN PROGRESS)", e -> handleTaskMove(t.getId(), TaskStatus.IN_PROGRESS));
+                    actionsRow.add(failBtn);
+                }
+                case BLOCKED -> {
+                    JButton unblockBtn = createCardActionButton("🔓", "Unblock (Move to IN PROGRESS)", e -> handleTaskMove(t.getId(), TaskStatus.IN_PROGRESS));
+                    actionsRow.add(unblockBtn);
+                }
+                case COMPLETED -> {
+                    if (isManagerOrAdmin) {
+                        JButton reopenBtn = createCardActionButton("🔄", "Reopen task (Move to IN PROGRESS)", e -> handleTaskMove(t.getId(), TaskStatus.IN_PROGRESS));
+                        actionsRow.add(reopenBtn);
+                    }
+                }
+            }
+
+            // ⚙️ Status transition popup menu for full stage control
+            JButton statusBtn = createCardActionButton("⚙️", "Select Status Stage...", e -> showStatusTransitionMenu(t, (JButton) e.getSource()));
             actionsRow.add(statusBtn);
         }
 
@@ -1042,6 +1164,42 @@ public class TaskManagementView extends BaseView {
         card.add(footerPanel, gbc);
 
         return card;
+    }
+
+    public void handleTaskMove(int taskId, TaskStatus targetStatus) {
+        Task task = allTasksList.stream().filter(t -> t.getId() == taskId).findFirst().orElse(null);
+        if (task == null || task.getStatus() == targetStatus) return;
+
+        SwingWorker<Void, Void> worker = new SwingWorker<>() {
+            @Override
+            protected Void doInBackground() throws Exception {
+                mainFrame.getTaskService().updateTaskStatus(taskId, targetStatus);
+                return null;
+            }
+
+            @Override
+            protected void done() {
+                try {
+                    get();
+                    refresh();
+                    mainFrame.updateNotificationCount();
+                } catch (Exception ex) {
+                    Throwable cause = ex;
+                    while (cause.getCause() != null) {
+                        cause = cause.getCause();
+                    }
+                    String errorMsg = cause.getMessage() != null ? cause.getMessage() : "Invalid task transition.";
+                    JOptionPane.showMessageDialog(
+                            TaskManagementView.this,
+                            errorMsg,
+                            "Workflow Rule Violation",
+                            JOptionPane.WARNING_MESSAGE
+                    );
+                    refresh();
+                }
+            }
+        };
+        worker.execute();
     }
 
     private JButton createCardActionButton(String icon, String tooltip, ActionListener listener) {
@@ -1159,27 +1317,7 @@ public class TaskManagementView extends BaseView {
         JPopupMenu menu = new JPopupMenu();
         for (TaskStatus status : TaskStatus.values()) {
             JMenuItem item = new JMenuItem(status.toString());
-            item.addActionListener(e -> {
-                SwingWorker<Void, Void> worker = new SwingWorker<>() {
-                    @Override
-                    protected Void doInBackground() throws Exception {
-                        mainFrame.getTaskService().updateTaskStatus(task.getId(), status);
-                        return null;
-                    }
-
-                    @Override
-                    protected void done() {
-                        try {
-                            get();
-                            refresh();
-                            mainFrame.updateNotificationCount();
-                        } catch (Exception ex) {
-                            JOptionPane.showMessageDialog(TaskManagementView.this, "Invalid Status Transition: " + ex.getCause().getMessage(), "Action Blocked", JOptionPane.ERROR_MESSAGE);
-                        }
-                    }
-                };
-                worker.execute();
-            });
+            item.addActionListener(e -> handleTaskMove(task.getId(), status));
             menu.add(item);
         }
         menu.show(triggerComponent, 0, triggerComponent.getHeight());
