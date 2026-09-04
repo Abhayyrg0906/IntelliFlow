@@ -1,5 +1,7 @@
 package com.intelliflow.model;
 
+import com.intelliflow.enums.ProjectHealth;
+
 public class ProjectProgressReport {
     private int projectId;
     private String projectName;
@@ -9,8 +11,17 @@ public class ProjectProgressReport {
     private int blockedTasks;
     private int overdueTasks;
     private double completionPercentage;
+    private ProjectHealth health = ProjectHealth.ON_TRACK;
 
     public ProjectProgressReport() {}
+
+    public ProjectHealth getHealth() {
+        return health;
+    }
+
+    public void setHealth(ProjectHealth health) {
+        this.health = health;
+    }
 
     // Getters and Setters
     public int getProjectId() {

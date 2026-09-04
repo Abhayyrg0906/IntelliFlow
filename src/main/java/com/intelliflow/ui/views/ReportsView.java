@@ -1,17 +1,18 @@
 package com.intelliflow.ui.views;
 
 import com.intelliflow.context.UserSession;
-import com.intelliflow.enums.Role;
+import com.intelliflow.enums.ProjectHealth;
 import com.intelliflow.enums.ProjectStatus;
-import com.intelliflow.enums.TaskStatus;
+import com.intelliflow.enums.Role;
 import com.intelliflow.enums.TaskPriority;
+import com.intelliflow.enums.TaskStatus;
 import com.intelliflow.exception.ValidationException;
 import com.intelliflow.model.*;
 import com.intelliflow.ui.MainFrame;
 import com.intelliflow.ui.ThemeManager;
+import com.intelliflow.ui.components.DashboardCard;
 import com.intelliflow.ui.components.ModernTable;
 import com.intelliflow.ui.components.RoundedPanel;
-import com.intelliflow.ui.components.DashboardCard;
 import com.intelliflow.util.CSVExporter;
 
 import javax.swing.*;
@@ -21,12 +22,11 @@ import java.awt.*;
 import java.io.File;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -85,6 +85,7 @@ public class ReportsView extends BaseView {
         scrollPane.setBorder(BorderFactory.createEmptyBorder());
         scrollPane.setOpaque(false);
         scrollPane.getViewport().setOpaque(false);
+        scrollPane.getVerticalScrollBar().setUnitIncrement(16);
         add(scrollPane, BorderLayout.CENTER);
     }
 
@@ -97,10 +98,12 @@ public class ReportsView extends BaseView {
             private List<Project> projects = new ArrayList<>();
             private List<Task> tasks = new ArrayList<>();
             private List<User> users = new ArrayList<>();
+            private AnalyticsSummary summary;
 
             @Override
             protected Void doInBackground() throws Exception {
                 users = mainFrame.getUserService().getAllUsers();
+                summary = mainFrame.getReportService().getAnalyticsSummary(currentUser);
 
                 if (currentUser.getRole() == Role.ADMIN) {
                     projects = mainFrame.getProjectService().getAllProjects();
@@ -130,11 +133,11 @@ public class ReportsView extends BaseView {
                     contentPanel.removeAll();
 
                     if (currentUser.getRole() == Role.ADMIN) {
-                        buildAdminReports(tasks, projects, users);
+                        buildAdminReports(summary, tasks, projects, users);
                     } else if (currentUser.getRole() == Role.MANAGER) {
-                        buildManagerReports(tasks, projects, users);
+                        buildManagerReports(summary, tasks, projects, users);
                     } else {
-                        buildEmployeeReports(tasks);
+                        buildEmployeeReports(summary, tasks, projects);
                     }
 
                     contentPanel.revalidate();
@@ -147,182 +150,286 @@ public class ReportsView extends BaseView {
         worker.execute();
     }
 
-    // --- Builder Panel Methods ---
+    // ==========================================
+    // ADMIN REPORTS & ANALYTICS
+    // ==========================================
+    private void buildAdminReports(AnalyticsSummary summary, List<Task> tasks, List<Project> projects, List<User> users) {
+        addHeaderTitle("System Analytics & Intelligence Hub", "Real-time system-wide analytics, project health monitoring, and performance audit");
 
-    private void buildAdminReports(List<Task> tasks, List<Project> projects, List<User> users) {
-        // Title block
-        addHeaderTitle("System Dashboard", "Global system metrics, user roles profile, and tasks status overview");
-
-        // KPI Summary cards
-        JPanel kpiGrid = new JPanel(new GridLayout(1, 3, 20, 0));
-        kpiGrid.setOpaque(false);
-        kpiGrid.setMaximumSize(new Dimension(Integer.MAX_VALUE, 110));
-
-        kpiGrid.add(new DashboardCard("👥", "Total Users", String.valueOf(users.size()), ThemeManager.COLOR_PRIMARY));
-        kpiGrid.add(new DashboardCard("📁", "Total Projects", String.valueOf(projects.size()), ThemeManager.COLOR_WARNING));
-        kpiGrid.add(new DashboardCard("📋", "Total Tasks", String.valueOf(tasks.size()), ThemeManager.COLOR_PRIMARY_HOVER));
-        contentPanel.add(kpiGrid);
-        contentPanel.add(Box.createVerticalStrut(25));
-
-        // Distribution breakdowns
-        JPanel distribPanel = new JPanel(new GridLayout(1, 2, 25, 0));
-        distribPanel.setOpaque(false);
-        distribPanel.setMaximumSize(new Dimension(Integer.MAX_VALUE, 380));
-
-        // 1. Users by Role
-        JPanel userBreakdownPanel = new RoundedPanel(12, ThemeManager.COLOR_CARD);
-        userBreakdownPanel.setLayout(new BorderLayout());
-        userBreakdownPanel.setBorder(new EmptyBorder(18, 20, 18, 20));
-
-        JLabel userTitle = new JLabel("User Accounts Distribution");
-        userTitle.setFont(ThemeManager.FONT_SUBTITLE);
-        userTitle.setForeground(ThemeManager.COLOR_TEXT_PRIMARY);
-        userTitle.setBorder(new EmptyBorder(0, 0, 15, 0));
-        userBreakdownPanel.add(userTitle, BorderLayout.NORTH);
-
-        JPanel userRows = new JPanel();
-        userRows.setOpaque(false);
-        userRows.setLayout(new BoxLayout(userRows, BoxLayout.Y_AXIS));
-
-        long adminCount = users.stream().filter(u -> u.getRole() == Role.ADMIN).count();
-        long managerCount = users.stream().filter(u -> u.getRole() == Role.MANAGER).count();
-        long employeeCount = users.stream().filter(u -> u.getRole() == Role.EMPLOYEE).count();
-        int totalUsers = users.size();
-
-        userRows.add(createBreakdownRow("🛡️ ADMINS", (int) adminCount, totalUsers, ThemeManager.COLOR_PRIMARY));
-        userRows.add(createBreakdownRow("👤 MANAGERS", (int) managerCount, totalUsers, ThemeManager.COLOR_PRIMARY_HOVER));
-        userRows.add(createBreakdownRow("👷 EMPLOYEES", (int) employeeCount, totalUsers, ThemeManager.COLOR_SUCCESS));
-
-        userBreakdownPanel.add(userRows, BorderLayout.CENTER);
-        distribPanel.add(userBreakdownPanel);
-
-        // 2. Global Task Breakdown
-        JPanel taskBreakdownPanel = new RoundedPanel(12, ThemeManager.COLOR_CARD);
-        taskBreakdownPanel.setLayout(new GridLayout(2, 1, 0, 15));
-        taskBreakdownPanel.setBorder(new EmptyBorder(18, 20, 18, 20));
-
-        // Statuses
-        JPanel statusBreakdown = new JPanel();
-        statusBreakdown.setOpaque(false);
-        statusBreakdown.setLayout(new BoxLayout(statusBreakdown, BoxLayout.Y_AXIS));
-
-        JLabel statusTitle = new JLabel("Tasks by Status");
-        statusTitle.setFont(ThemeManager.FONT_BOLD_SMALL);
-        statusTitle.setForeground(ThemeManager.COLOR_TEXT_PRIMARY);
-        statusBreakdown.add(statusTitle);
-
-        Map<TaskStatus, Long> statusCounts = tasks.stream().collect(Collectors.groupingBy(Task::getStatus, Collectors.counting()));
-        int totalTasks = tasks.size();
-
-        statusBreakdown.add(createBreakdownRow("📋 TO DO", statusCounts.getOrDefault(TaskStatus.TO_DO, 0L).intValue(), totalTasks, new Color(148, 163, 184)));
-        statusBreakdown.add(createBreakdownRow("⚡ IN PROGRESS", statusCounts.getOrDefault(TaskStatus.IN_PROGRESS, 0L).intValue(), totalTasks, new Color(59, 130, 246)));
-        statusBreakdown.add(createBreakdownRow("✓ COMPLETED", statusCounts.getOrDefault(TaskStatus.COMPLETED, 0L).intValue(), totalTasks, ThemeManager.COLOR_SUCCESS));
-
-        // Priorities
-        JPanel priorityBreakdown = new JPanel();
-        priorityBreakdown.setOpaque(false);
-        priorityBreakdown.setLayout(new BoxLayout(priorityBreakdown, BoxLayout.Y_AXIS));
-
-        JLabel priorityTitle = new JLabel("Tasks by Priority");
-        priorityTitle.setFont(ThemeManager.FONT_BOLD_SMALL);
-        priorityTitle.setForeground(ThemeManager.COLOR_TEXT_PRIMARY);
-        priorityBreakdown.add(priorityTitle);
-
-        Map<TaskPriority, Long> priorityCounts = tasks.stream().collect(Collectors.groupingBy(Task::getPriority, Collectors.counting()));
-
-        priorityBreakdown.add(createBreakdownRow("🔴 CRITICAL", priorityCounts.getOrDefault(TaskPriority.CRITICAL, 0L).intValue(), totalTasks, ThemeManager.COLOR_DANGER));
-        priorityBreakdown.add(createBreakdownRow("🟠 HIGH", priorityCounts.getOrDefault(TaskPriority.HIGH, 0L).intValue(), totalTasks, ThemeManager.COLOR_WARNING));
-        priorityBreakdown.add(createBreakdownRow("🔵 MEDIUM", priorityCounts.getOrDefault(TaskPriority.MEDIUM, 0L).intValue(), totalTasks, new Color(79, 70, 229)));
-
-        taskBreakdownPanel.add(statusBreakdown);
-        taskBreakdownPanel.add(priorityBreakdown);
-        distribPanel.add(taskBreakdownPanel);
-
-        contentPanel.add(distribPanel);
-    }
-
-    private void buildManagerReports(List<Task> tasks, List<Project> projects, List<User> users) {
-        addHeaderTitle("Project & Team Performance Analytics", "Performance metrics for your managed projects and team tasks");
-
-        // KPI Panel (5 summary cards)
+        // 1. Primary KPIs Row (5 cards)
         JPanel kpiGrid = new JPanel(new GridLayout(1, 5, 15, 0));
         kpiGrid.setOpaque(false);
         kpiGrid.setMaximumSize(new Dimension(Integer.MAX_VALUE, 110));
 
-        long activePrjs = projects.stream().filter(p -> p.getStatus() == ProjectStatus.ACTIVE).count();
-        long compPrjs = projects.stream().filter(p -> p.getStatus() == ProjectStatus.COMPLETED).count();
-        long compTasks = tasks.stream().filter(t -> t.getStatus() == TaskStatus.COMPLETED).count();
-
-        kpiGrid.add(new DashboardCard("📁", "Total Projects", String.valueOf(projects.size()), ThemeManager.COLOR_PRIMARY));
-        kpiGrid.add(new DashboardCard("⏳", "Active Projects", String.valueOf(activePrjs), ThemeManager.COLOR_WARNING));
-        kpiGrid.add(new DashboardCard("✓", "Completed Projects", String.valueOf(compPrjs), ThemeManager.COLOR_SUCCESS));
-        kpiGrid.add(new DashboardCard("📋", "Total Tasks", String.valueOf(tasks.size()), ThemeManager.COLOR_PRIMARY_HOVER));
-        kpiGrid.add(new DashboardCard("✓", "Completed Tasks", String.valueOf(compTasks), ThemeManager.COLOR_SUCCESS));
+        kpiGrid.add(new DashboardCard("📋", "Total Tasks", String.valueOf(summary.getTotalTasks()), ThemeManager.COLOR_PRIMARY));
+        kpiGrid.add(new DashboardCard("🎯", "Completion Rate", summary.getTaskCompletionRate() + "%", ThemeManager.COLOR_SUCCESS));
+        kpiGrid.add(new DashboardCard("⛔", "Overdue Tasks", String.valueOf(summary.getOverdueTaskCount()), ThemeManager.COLOR_DANGER));
+        kpiGrid.add(new DashboardCard("⚠️", "Due Soon (1-2d)", String.valueOf(summary.getDueSoonTaskCount()), ThemeManager.COLOR_WARNING));
+        kpiGrid.add(new DashboardCard("📁", "Total Projects", String.valueOf(projects.size()), new Color(139, 92, 246)));
 
         contentPanel.add(kpiGrid);
-        contentPanel.add(Box.createVerticalStrut(25));
+        contentPanel.add(Box.createVerticalStrut(20));
 
-        // Distribution Panel
+        // 2. Distributions Grid (Priority & Status)
         JPanel distribPanel = new JPanel(new GridLayout(1, 2, 20, 0));
         distribPanel.setOpaque(false);
         distribPanel.setMaximumSize(new Dimension(Integer.MAX_VALUE, 260));
 
-        // Status Breakdown
-        JPanel statusPanel = new RoundedPanel(12, ThemeManager.COLOR_CARD);
-        statusPanel.setLayout(new BorderLayout());
-        statusPanel.setBorder(new EmptyBorder(15, 20, 15, 20));
-
-        JLabel statusTitle = new JLabel("Task Status Statistics");
-        statusTitle.setFont(ThemeManager.FONT_SUBTITLE);
-        statusTitle.setForeground(ThemeManager.COLOR_TEXT_PRIMARY);
-        statusTitle.setBorder(new EmptyBorder(0, 0, 12, 0));
-        statusPanel.add(statusTitle, BorderLayout.NORTH);
-
-        JPanel statusRows = new JPanel();
-        statusRows.setOpaque(false);
-        statusRows.setLayout(new BoxLayout(statusRows, BoxLayout.Y_AXIS));
-
-        Map<TaskStatus, Long> statusCounts = tasks.stream().collect(Collectors.groupingBy(Task::getStatus, Collectors.counting()));
-        int totalTasks = tasks.size();
-
-        statusRows.add(createBreakdownRow("📋 TO DO", statusCounts.getOrDefault(TaskStatus.TO_DO, 0L).intValue(), totalTasks, new Color(148, 163, 184)));
-        statusRows.add(createBreakdownRow("⚡ IN PROGRESS", statusCounts.getOrDefault(TaskStatus.IN_PROGRESS, 0L).intValue(), totalTasks, new Color(59, 130, 246)));
-        statusRows.add(createBreakdownRow("🧪 TESTING", statusCounts.getOrDefault(TaskStatus.TESTING, 0L).intValue(), totalTasks, new Color(245, 158, 11)));
-        statusRows.add(createBreakdownRow("✓ COMPLETED", statusCounts.getOrDefault(TaskStatus.COMPLETED, 0L).intValue(), totalTasks, ThemeManager.COLOR_SUCCESS));
-        statusRows.add(createBreakdownRow("🚫 BLOCKED", statusCounts.getOrDefault(TaskStatus.BLOCKED, 0L).intValue(), totalTasks, ThemeManager.COLOR_DANGER));
-
-        statusPanel.add(statusRows, BorderLayout.CENTER);
-        distribPanel.add(statusPanel);
-
-        // Priority Breakdown
-        JPanel priorityPanel = new RoundedPanel(12, ThemeManager.COLOR_CARD);
-        priorityPanel.setLayout(new BorderLayout());
-        priorityPanel.setBorder(new EmptyBorder(15, 20, 15, 20));
-
-        JLabel priorityTitle = new JLabel("Task Priority Distributions");
-        priorityTitle.setFont(ThemeManager.FONT_SUBTITLE);
-        priorityTitle.setForeground(ThemeManager.COLOR_TEXT_PRIMARY);
-        priorityTitle.setBorder(new EmptyBorder(0, 0, 12, 0));
-        priorityPanel.add(priorityTitle, BorderLayout.NORTH);
-
-        JPanel priorityRows = new JPanel();
-        priorityRows.setOpaque(false);
-        priorityRows.setLayout(new BoxLayout(priorityRows, BoxLayout.Y_AXIS));
-
-        Map<TaskPriority, Long> priorityCounts = tasks.stream().collect(Collectors.groupingBy(Task::getPriority, Collectors.counting()));
-
-        priorityRows.add(createBreakdownRow("🔴 CRITICAL", priorityCounts.getOrDefault(TaskPriority.CRITICAL, 0L).intValue(), totalTasks, ThemeManager.COLOR_DANGER));
-        priorityRows.add(createBreakdownRow("🟠 HIGH", priorityCounts.getOrDefault(TaskPriority.HIGH, 0L).intValue(), totalTasks, ThemeManager.COLOR_WARNING));
-        priorityRows.add(createBreakdownRow("🔵 MEDIUM", priorityCounts.getOrDefault(TaskPriority.MEDIUM, 0L).intValue(), totalTasks, new Color(79, 70, 229)));
-        priorityRows.add(createBreakdownRow("🟢 LOW", priorityCounts.getOrDefault(TaskPriority.LOW, 0L).intValue(), totalTasks, new Color(71, 85, 105)));
-
-        priorityPanel.add(priorityRows, BorderLayout.CENTER);
-        distribPanel.add(priorityPanel);
+        distribPanel.add(createPriorityDistributionCard(summary.getPriorityDistribution(), summary.getTotalTasks()));
+        distribPanel.add(createStatusDistributionCard(summary.getStatusDistribution(), summary.getTotalTasks()));
 
         contentPanel.add(distribPanel);
-        contentPanel.add(Box.createVerticalStrut(25));
+        contentPanel.add(Box.createVerticalStrut(20));
 
-        // Project Specific Auditing Directory (Original function)
+        // 3. Project Progress & Health Section
+        contentPanel.add(createProjectProgressSection(summary.getProjectProgressList(), summary.getProjectHealthDistribution()));
+        contentPanel.add(Box.createVerticalStrut(20));
+
+        // 4. Employee Workload Section
+        contentPanel.add(createEmployeeWorkloadSection(summary.getEmployeeWorkloads()));
+        contentPanel.add(Box.createVerticalStrut(20));
+
+        // 5. Interactive Project Audit & CSV Export
+        buildProjectAuditSection(projects);
+    }
+
+    // ==========================================
+    // MANAGER REPORTS & ANALYTICS
+    // ==========================================
+    private void buildManagerReports(AnalyticsSummary summary, List<Task> tasks, List<Project> projects, List<User> users) {
+        addHeaderTitle("Managed Projects & Team Analytics", "Project completion rates, workload distribution, and deadline health for your managed portfolio");
+
+        // 1. Primary KPIs Row (5 cards)
+        JPanel kpiGrid = new JPanel(new GridLayout(1, 5, 15, 0));
+        kpiGrid.setOpaque(false);
+        kpiGrid.setMaximumSize(new Dimension(Integer.MAX_VALUE, 110));
+
+        kpiGrid.add(new DashboardCard("📁", "Managed Projects", String.valueOf(projects.size()), ThemeManager.COLOR_PRIMARY));
+        kpiGrid.add(new DashboardCard("📋", "Team Tasks", String.valueOf(summary.getTotalTasks()), ThemeManager.COLOR_PRIMARY_HOVER));
+        kpiGrid.add(new DashboardCard("🎯", "Completion Rate", summary.getTaskCompletionRate() + "%", ThemeManager.COLOR_SUCCESS));
+        kpiGrid.add(new DashboardCard("⛔", "Overdue Tasks", String.valueOf(summary.getOverdueTaskCount()), ThemeManager.COLOR_DANGER));
+        kpiGrid.add(new DashboardCard("⚠️", "Due Soon (1-2d)", String.valueOf(summary.getDueSoonTaskCount()), ThemeManager.COLOR_WARNING));
+
+        contentPanel.add(kpiGrid);
+        contentPanel.add(Box.createVerticalStrut(20));
+
+        // 2. Distributions Grid (Priority & Status)
+        JPanel distribPanel = new JPanel(new GridLayout(1, 2, 20, 0));
+        distribPanel.setOpaque(false);
+        distribPanel.setMaximumSize(new Dimension(Integer.MAX_VALUE, 260));
+
+        distribPanel.add(createPriorityDistributionCard(summary.getPriorityDistribution(), summary.getTotalTasks()));
+        distribPanel.add(createStatusDistributionCard(summary.getStatusDistribution(), summary.getTotalTasks()));
+
+        contentPanel.add(distribPanel);
+        contentPanel.add(Box.createVerticalStrut(20));
+
+        // 3. Project Progress & Health Section
+        contentPanel.add(createProjectProgressSection(summary.getProjectProgressList(), summary.getProjectHealthDistribution()));
+        contentPanel.add(Box.createVerticalStrut(20));
+
+        // 4. Team Workload Section
+        contentPanel.add(createEmployeeWorkloadSection(summary.getEmployeeWorkloads()));
+        contentPanel.add(Box.createVerticalStrut(20));
+
+        // 5. Interactive Project Audit & CSV Export
+        buildProjectAuditSection(projects);
+    }
+
+    // ==========================================
+    // EMPLOYEE REPORTS & ANALYTICS
+    // ==========================================
+    private void buildEmployeeReports(AnalyticsSummary summary, List<Task> tasks, List<Project> projects) {
+        addHeaderTitle("Personal Productivity Analytics", "Assigned task completion rate, priority distribution, and upcoming deadline tracking");
+
+        // 1. Primary KPIs Row (5 cards)
+        JPanel kpiGrid = new JPanel(new GridLayout(1, 5, 15, 0));
+        kpiGrid.setOpaque(false);
+        kpiGrid.setMaximumSize(new Dimension(Integer.MAX_VALUE, 110));
+
+        kpiGrid.add(new DashboardCard("📋", "My Tasks", String.valueOf(summary.getTotalTasks()), ThemeManager.COLOR_PRIMARY));
+        kpiGrid.add(new DashboardCard("✓", "Completed", String.valueOf(summary.getCompletedTasks()), ThemeManager.COLOR_SUCCESS));
+        kpiGrid.add(new DashboardCard("🎯", "Completion Rate", summary.getTaskCompletionRate() + "%", ThemeManager.COLOR_PRIMARY_HOVER));
+        kpiGrid.add(new DashboardCard("⛔", "Overdue Tasks", String.valueOf(summary.getOverdueTaskCount()), ThemeManager.COLOR_DANGER));
+        kpiGrid.add(new DashboardCard("⚠️", "Due Soon (1-2d)", String.valueOf(summary.getDueSoonTaskCount()), ThemeManager.COLOR_WARNING));
+
+        contentPanel.add(kpiGrid);
+        contentPanel.add(Box.createVerticalStrut(20));
+
+        // 2. Distributions Grid (Priority & Status)
+        JPanel distribPanel = new JPanel(new GridLayout(1, 2, 20, 0));
+        distribPanel.setOpaque(false);
+        distribPanel.setMaximumSize(new Dimension(Integer.MAX_VALUE, 260));
+
+        distribPanel.add(createPriorityDistributionCard(summary.getPriorityDistribution(), summary.getTotalTasks()));
+        distribPanel.add(createStatusDistributionCard(summary.getStatusDistribution(), summary.getTotalTasks()));
+
+        contentPanel.add(distribPanel);
+        contentPanel.add(Box.createVerticalStrut(20));
+
+        // 3. Project Progress for Contributed Projects
+        if (!summary.getProjectProgressList().isEmpty()) {
+            contentPanel.add(createProjectProgressSection(summary.getProjectProgressList(), summary.getProjectHealthDistribution()));
+            contentPanel.add(Box.createVerticalStrut(20));
+        }
+
+        // 4. Deadlines Action Directory
+        buildEmployeeDeadlinesSection(tasks);
+    }
+
+    // ==========================================
+    // REUSABLE VISUAL ANALYTICS COMPONENTS
+    // ==========================================
+
+    private JPanel createPriorityDistributionCard(Map<TaskPriority, Integer> priorityMap, int totalTasks) {
+        JPanel card = new RoundedPanel(12, ThemeManager.COLOR_CARD);
+        card.setLayout(new BorderLayout());
+        card.setBorder(new EmptyBorder(15, 20, 15, 20));
+
+        JLabel title = new JLabel("TASK PRIORITY DISTRIBUTION");
+        title.setFont(ThemeManager.FONT_SUBTITLE);
+        title.setForeground(ThemeManager.COLOR_TEXT_PRIMARY);
+        title.setBorder(new EmptyBorder(0, 0, 12, 0));
+        card.add(title, BorderLayout.NORTH);
+
+        JPanel rows = new JPanel();
+        rows.setOpaque(false);
+        rows.setLayout(new BoxLayout(rows, BoxLayout.Y_AXIS));
+
+        rows.add(createBreakdownRow("🔴 CRITICAL", priorityMap.getOrDefault(TaskPriority.CRITICAL, 0), totalTasks, ThemeManager.COLOR_DANGER));
+        rows.add(createBreakdownRow("🟠 HIGH", priorityMap.getOrDefault(TaskPriority.HIGH, 0), totalTasks, ThemeManager.COLOR_WARNING));
+        rows.add(createBreakdownRow("🔵 MEDIUM", priorityMap.getOrDefault(TaskPriority.MEDIUM, 0), totalTasks, new Color(59, 130, 246)));
+        rows.add(createBreakdownRow("🟢 LOW", priorityMap.getOrDefault(TaskPriority.LOW, 0), totalTasks, new Color(71, 85, 105)));
+
+        card.add(rows, BorderLayout.CENTER);
+        return card;
+    }
+
+    private JPanel createStatusDistributionCard(Map<TaskStatus, Integer> statusMap, int totalTasks) {
+        JPanel card = new RoundedPanel(12, ThemeManager.COLOR_CARD);
+        card.setLayout(new BorderLayout());
+        card.setBorder(new EmptyBorder(15, 20, 15, 20));
+
+        JLabel title = new JLabel("TASK STATUS DISTRIBUTION");
+        title.setFont(ThemeManager.FONT_SUBTITLE);
+        title.setForeground(ThemeManager.COLOR_TEXT_PRIMARY);
+        title.setBorder(new EmptyBorder(0, 0, 12, 0));
+        card.add(title, BorderLayout.NORTH);
+
+        JPanel rows = new JPanel();
+        rows.setOpaque(false);
+        rows.setLayout(new BoxLayout(rows, BoxLayout.Y_AXIS));
+
+        rows.add(createBreakdownRow("📋 TO DO", statusMap.getOrDefault(TaskStatus.TO_DO, 0), totalTasks, new Color(148, 163, 184)));
+        rows.add(createBreakdownRow("⚡ IN PROGRESS", statusMap.getOrDefault(TaskStatus.IN_PROGRESS, 0), totalTasks, new Color(59, 130, 246)));
+        rows.add(createBreakdownRow("🧪 TESTING", statusMap.getOrDefault(TaskStatus.TESTING, 0), totalTasks, new Color(245, 158, 11)));
+        rows.add(createBreakdownRow("✓ COMPLETED", statusMap.getOrDefault(TaskStatus.COMPLETED, 0), totalTasks, ThemeManager.COLOR_SUCCESS));
+        rows.add(createBreakdownRow("🚫 BLOCKED", statusMap.getOrDefault(TaskStatus.BLOCKED, 0), totalTasks, ThemeManager.COLOR_DANGER));
+
+        card.add(rows, BorderLayout.CENTER);
+        return card;
+    }
+
+    private JPanel createProjectProgressSection(List<ProjectProgressReport> projectReports, Map<ProjectHealth, Integer> healthMap) {
+        RoundedPanel section = new RoundedPanel(12, ThemeManager.COLOR_CARD);
+        section.setLayout(new BorderLayout(15, 12));
+        section.setBorder(new EmptyBorder(18, 20, 18, 20));
+        section.setMaximumSize(new Dimension(Integer.MAX_VALUE, 400));
+
+        // Header with Health Summary Badges
+        JPanel header = new JPanel(new BorderLayout());
+        header.setOpaque(false);
+
+        JLabel title = new JLabel("PROJECT PROGRESS & HEALTH MONITORING");
+        title.setFont(ThemeManager.FONT_SUBTITLE);
+        title.setForeground(ThemeManager.COLOR_TEXT_PRIMARY);
+        header.add(title, BorderLayout.WEST);
+
+        JPanel healthBadges = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 0));
+        healthBadges.setOpaque(false);
+
+        int onTrack = healthMap.getOrDefault(ProjectHealth.ON_TRACK, 0);
+        int atRisk = healthMap.getOrDefault(ProjectHealth.AT_RISK, 0);
+        int delayed = healthMap.getOrDefault(ProjectHealth.DELAYED, 0);
+
+        healthBadges.add(createPillBadge("🟢 ON TRACK: " + onTrack, new Color(34, 197, 94, 40), ThemeManager.COLOR_SUCCESS));
+        healthBadges.add(createPillBadge("🟡 AT RISK: " + atRisk, new Color(245, 158, 11, 40), ThemeManager.COLOR_WARNING));
+        healthBadges.add(createPillBadge("🔴 DELAYED: " + delayed, new Color(239, 68, 68, 40), ThemeManager.COLOR_DANGER));
+        header.add(healthBadges, BorderLayout.EAST);
+
+        section.add(header, BorderLayout.NORTH);
+
+        // Progress Table
+        DefaultTableModel model = new DefaultTableModel(
+                new Object[]{"Project Name", "Health", "Tasks (Done / Total)", "Progress Track", "Completion %"}, 0
+        );
+        ModernTable table = new ModernTable();
+        table.setModel(model);
+        table.setPlaceholderText("No projects available to monitor.");
+
+        for (ProjectProgressReport p : projectReports) {
+            String asciiBar = formatAsciiProgressBar(p.getCompletionPercentage());
+            String healthLabel = switch (p.getHealth()) {
+                case ON_TRACK -> "🟢 ON TRACK";
+                case AT_RISK -> "🟡 AT RISK";
+                case DELAYED -> "🔴 DELAYED";
+            };
+
+            model.addRow(new Object[]{
+                    p.getProjectName(),
+                    healthLabel,
+                    p.getCompletedTasks() + " / " + p.getTotalTasks(),
+                    asciiBar,
+                    p.getCompletionPercentage() + "%"
+            });
+        }
+
+        JScrollPane scroll = new JScrollPane(table);
+        scroll.setBorder(BorderFactory.createEmptyBorder());
+        scroll.setPreferredSize(new Dimension(800, 160));
+        section.add(scroll, BorderLayout.CENTER);
+
+        return section;
+    }
+
+    private JPanel createEmployeeWorkloadSection(List<EmployeePerformanceReport> workloads) {
+        RoundedPanel section = new RoundedPanel(12, ThemeManager.COLOR_CARD);
+        section.setLayout(new BorderLayout(15, 12));
+        section.setBorder(new EmptyBorder(18, 20, 18, 20));
+        section.setMaximumSize(new Dimension(Integer.MAX_VALUE, 320));
+
+        JLabel title = new JLabel("EMPLOYEE WORKLOAD & PERFORMANCE ANALYTICS");
+        title.setFont(ThemeManager.FONT_SUBTITLE);
+        title.setForeground(ThemeManager.COLOR_TEXT_PRIMARY);
+        section.add(title, BorderLayout.NORTH);
+
+        DefaultTableModel model = new DefaultTableModel(
+                new Object[]{"Employee Name", "Total Assigned", "Active Tasks", "Completed Tasks", "Overdue Tasks", "Workload Completion %"}, 0
+        );
+        ModernTable table = new ModernTable();
+        table.setModel(model);
+        table.setPlaceholderText("No employee workload records available.");
+
+        for (EmployeePerformanceReport emp : workloads) {
+            model.addRow(new Object[]{
+                    emp.getEmployeeName(),
+                    emp.getTotalTasks(),
+                    emp.getPendingTasks(),
+                    emp.getCompletedTasks(),
+                    emp.getOverdueTasks() > 0 ? "⛔ " + emp.getOverdueTasks() : "0",
+                    emp.getCompletionRate() + "% (" + formatAsciiProgressBar(emp.getCompletionRate()) + ")"
+            });
+        }
+
+        JScrollPane scroll = new JScrollPane(table);
+        scroll.setBorder(BorderFactory.createEmptyBorder());
+        scroll.setPreferredSize(new Dimension(800, 160));
+        section.add(scroll, BorderLayout.CENTER);
+
+        return section;
+    }
+
+    private void buildProjectAuditSection(List<Project> projects) {
         JPanel auditPanel = new RoundedPanel(12, ThemeManager.COLOR_CARD);
         auditPanel.setLayout(new BorderLayout(15, 10));
         auditPanel.setBorder(new EmptyBorder(20, 20, 20, 20));
@@ -334,7 +441,10 @@ public class ReportsView extends BaseView {
 
         JPanel comboPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0));
         comboPanel.setOpaque(false);
-        comboPanel.add(new JLabel("Select Project for Audit:"));
+        JLabel comboLbl = new JLabel("Project Audit Directory:");
+        comboLbl.setFont(ThemeManager.FONT_BOLD_SMALL);
+        comboLbl.setForeground(ThemeManager.COLOR_TEXT_PRIMARY);
+        comboPanel.add(comboLbl);
 
         projectCombo = new JComboBox<>();
         projectCombo.setPreferredSize(new Dimension(250, 30));
@@ -403,12 +513,12 @@ public class ReportsView extends BaseView {
         reportTaskTable.setModel(tableModel);
 
         JScrollPane scroll = new JScrollPane(reportTaskTable);
-        scroll.setPreferredSize(new Dimension(800, 220));
+        scroll.setPreferredSize(new Dimension(800, 200));
         scroll.setBorder(BorderFactory.createEmptyBorder());
 
         JPanel tableWrapper = new JPanel(new BorderLayout(0, 8));
         tableWrapper.setOpaque(false);
-        JLabel tableTitle = new JLabel("Project Tasks Audit Directory");
+        JLabel tableTitle = new JLabel("Project Tasks Breakdown");
         tableTitle.setFont(ThemeManager.FONT_BOLD_SMALL);
         tableTitle.setForeground(ThemeManager.COLOR_TEXT_PRIMARY);
         tableWrapper.add(tableTitle, BorderLayout.NORTH);
@@ -422,59 +532,13 @@ public class ReportsView extends BaseView {
         calculateProjectReport();
     }
 
-    private void buildEmployeeReports(List<Task> tasks) {
-        addHeaderTitle("My Tasks Analytics Dashboard", "Personal progress rates, task completions, and timeline warnings");
-
-        // KPI Summary cards
-        JPanel kpiGrid = new JPanel(new GridLayout(1, 5, 15, 0));
-        kpiGrid.setOpaque(false);
-        kpiGrid.setMaximumSize(new Dimension(Integer.MAX_VALUE, 110));
-
-        long completed = tasks.stream().filter(t -> t.getStatus() == TaskStatus.COMPLETED).count();
-        long inProgress = tasks.stream().filter(t -> t.getStatus() == TaskStatus.IN_PROGRESS).count();
-        long testing = tasks.stream().filter(t -> t.getStatus() == TaskStatus.TESTING).count();
-        long todo = tasks.stream().filter(t -> t.getStatus() == TaskStatus.TO_DO).count();
-
-        kpiGrid.add(new DashboardCard("📋", "Assigned Tasks", String.valueOf(tasks.size()), ThemeManager.COLOR_PRIMARY));
-        kpiGrid.add(new DashboardCard("✓", "Completed", String.valueOf(completed), ThemeManager.COLOR_SUCCESS));
-        kpiGrid.add(new DashboardCard("⚡", "In Progress", String.valueOf(inProgress), ThemeManager.COLOR_PRIMARY_HOVER));
-        kpiGrid.add(new DashboardCard("🧪", "Testing Tasks", String.valueOf(testing), ThemeManager.COLOR_WARNING));
-        kpiGrid.add(new DashboardCard("📋", "To Do Tasks", String.valueOf(todo), new Color(148, 163, 184)));
-
-        contentPanel.add(kpiGrid);
-        contentPanel.add(Box.createVerticalStrut(25));
-
-        // Overall progress Completion rate
-        RoundedPanel progressPanel = new RoundedPanel(12, ThemeManager.COLOR_CARD);
-        progressPanel.setDrawBorder(true);
-        progressPanel.setBorderColor(ThemeManager.COLOR_BORDER);
-        progressPanel.setLayout(new BorderLayout(15, 8));
-        progressPanel.setBorder(new EmptyBorder(18, 20, 18, 20));
-        progressPanel.setMaximumSize(new Dimension(Integer.MAX_VALUE, 75));
-
-        double progressPercentage = tasks.isEmpty() ? 0.0 : (completed * 100.0 / tasks.size());
-        int progressInt = (int) Math.round(progressPercentage);
-
-        JLabel progLabel = new JLabel("My Task Completion Progress: " + progressInt + "%");
-        progLabel.setFont(ThemeManager.FONT_BOLD_SMALL);
-        progLabel.setForeground(ThemeManager.COLOR_TEXT_PRIMARY);
-        progressPanel.add(progLabel, BorderLayout.NORTH);
-
-        JProgressBar employeeBar = new JProgressBar(0, 100);
-        employeeBar.setValue(progressInt);
-        employeeBar.setForeground(ThemeManager.COLOR_SUCCESS);
-        progressPanel.add(employeeBar, BorderLayout.CENTER);
-
-        contentPanel.add(progressPanel);
-        contentPanel.add(Box.createVerticalStrut(25));
-
-        // Deadlines alert panel
+    private void buildEmployeeDeadlinesSection(List<Task> tasks) {
         JPanel alertPanel = new RoundedPanel(12, ThemeManager.COLOR_CARD);
         alertPanel.setLayout(new BorderLayout(10, 10));
         alertPanel.setBorder(new EmptyBorder(18, 20, 18, 20));
         alertPanel.setMaximumSize(new Dimension(Integer.MAX_VALUE, 380));
 
-        JLabel alertTitle = new JLabel("Deadline Action Alert Directory");
+        JLabel alertTitle = new JLabel("DEADLINE ACTION & SCHEDULE DIRECTORY");
         alertTitle.setFont(ThemeManager.FONT_SUBTITLE);
         alertTitle.setForeground(ThemeManager.COLOR_TEXT_PRIMARY);
         alertPanel.add(alertTitle, BorderLayout.NORTH);
@@ -483,7 +547,6 @@ public class ReportsView extends BaseView {
                 new Object[]{"Task ID", "Task Name", "Priority", "Deadline Date", "Days Remaining", "Current Status"}, 0
         );
 
-        // Custom renderer to highlight overdue active rows in red
         ModernTable alertTable = new ModernTable() {
             @Override
             public Component prepareRenderer(javax.swing.table.TableCellRenderer renderer, int row, int column) {
@@ -507,6 +570,7 @@ public class ReportsView extends BaseView {
                 .collect(Collectors.toList());
 
         DateTimeFormatter dtf = DateTimeFormatter.ofPattern("yyyy-MM-dd");
+        LocalDate today = LocalDate.now();
         for (Task t : activeTasks) {
             String daysRemaining;
             String deadlineStr;
@@ -514,7 +578,7 @@ public class ReportsView extends BaseView {
                 daysRemaining = "No Deadline";
                 deadlineStr = "No Deadline";
             } else {
-                long diff = java.time.temporal.ChronoUnit.DAYS.between(LocalDate.now(), t.getDeadline());
+                long diff = ChronoUnit.DAYS.between(today, t.getDeadline());
                 if (diff < 0) {
                     daysRemaining = "OVERDUE (" + Math.abs(diff) + " days ago)";
                 } else if (diff == 0) {
@@ -537,13 +601,27 @@ public class ReportsView extends BaseView {
 
         JScrollPane alertScroll = new JScrollPane(alertTable);
         alertScroll.setBorder(BorderFactory.createEmptyBorder());
-        alertScroll.setPreferredSize(new Dimension(800, 260));
+        alertScroll.setPreferredSize(new Dimension(800, 240));
         alertPanel.add(alertScroll, BorderLayout.CENTER);
 
         contentPanel.add(alertPanel);
     }
 
     // --- Helpers ---
+
+    public static String formatAsciiProgressBar(double percentage) {
+        int totalBlocks = 18;
+        int filledBlocks = (int) Math.round((Math.max(0.0, Math.min(100.0, percentage)) / 100.0) * totalBlocks);
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < filledBlocks; i++) {
+            sb.append("█");
+        }
+        for (int i = filledBlocks; i < totalBlocks; i++) {
+            sb.append("░");
+        }
+        sb.append(String.format(" %d%%", (int) Math.round(percentage)));
+        return sb.toString();
+    }
 
     private void addHeaderTitle(String title, String subtitle) {
         JPanel titlePanel = new JPanel(new GridBagLayout());
@@ -569,6 +647,17 @@ public class ReportsView extends BaseView {
         titlePanel.add(subLabel, gbc);
 
         contentPanel.add(titlePanel);
+    }
+
+    private JPanel createPillBadge(String text, Color bg, Color fg) {
+        JPanel badge = new JPanel(new FlowLayout(FlowLayout.CENTER, 8, 4));
+        badge.setBackground(bg);
+        badge.setBorder(BorderFactory.createLineBorder(fg, 1));
+        JLabel lbl = new JLabel(text);
+        lbl.setFont(ThemeManager.FONT_BOLD_SMALL);
+        lbl.setForeground(fg);
+        badge.add(lbl);
+        return badge;
     }
 
     private JPanel createStatCard(JLabel valLabel, JLabel lblLabel, Color borderHighlight) {
@@ -600,41 +689,49 @@ public class ReportsView extends BaseView {
         row.setOpaque(false);
         row.setBorder(new EmptyBorder(6, 0, 6, 0));
 
-        JLabel nameLabel = new JLabel(label);
-        nameLabel.setFont(ThemeManager.FONT_BOLD_SMALL);
-        nameLabel.setForeground(ThemeManager.COLOR_TEXT_PRIMARY);
-        nameLabel.setPreferredSize(new Dimension(130, 20));
-        row.add(nameLabel, BorderLayout.WEST);
+        JLabel titleLbl = new JLabel(label);
+        titleLbl.setFont(ThemeManager.FONT_BODY);
+        titleLbl.setForeground(ThemeManager.COLOR_TEXT_PRIMARY);
+        titleLbl.setPreferredSize(new Dimension(140, 20));
+        row.add(titleLbl, BorderLayout.WEST);
 
-        int pct = total > 0 ? (int) Math.round(count * 100.0 / total) : 0;
+        int percent = total > 0 ? (int) Math.round(((double) count / total) * 100) : 0;
+
         JProgressBar bar = new JProgressBar(0, 100);
-        bar.setValue(pct);
+        bar.setValue(percent);
         bar.setForeground(color);
-        bar.setPreferredSize(new Dimension(150, 12));
+        bar.setBackground(ThemeManager.COLOR_BACKGROUND);
+        bar.setBorderPainted(false);
+        bar.setPreferredSize(new Dimension(150, 10));
         row.add(bar, BorderLayout.CENTER);
 
-        JLabel countLabel = new JLabel(count + " (" + pct + "%)", SwingConstants.RIGHT);
-        countLabel.setFont(ThemeManager.FONT_SMALL);
-        countLabel.setForeground(ThemeManager.COLOR_TEXT_MUTED);
-        countLabel.setPreferredSize(new Dimension(100, 20));
-        row.add(countLabel, BorderLayout.EAST);
+        JLabel valLbl = new JLabel(count + " (" + percent + "%)", SwingConstants.RIGHT);
+        valLbl.setFont(ThemeManager.FONT_BOLD_SMALL);
+        valLbl.setForeground(ThemeManager.COLOR_TEXT_MUTED);
+        valLbl.setPreferredSize(new Dimension(80, 20));
+        row.add(valLbl, BorderLayout.EAST);
 
         return row;
     }
 
+    // --- Action Methods ---
+
     private void calculateProjectReport() {
-        if (projectCombo == null) return;
+        if (projectCombo == null || projectCombo.getSelectedItem() == null) return;
         ProjectItem item = (ProjectItem) projectCombo.getSelectedItem();
-        if (item == null) {
-            clearReportFields();
-            return;
-        }
 
         SwingWorker<Void, Void> worker = new SwingWorker<>() {
+            private List<Task> tasks = new ArrayList<>();
+
             @Override
             protected Void doInBackground() throws Exception {
-                currentReport = mainFrame.getReportService().getProjectProgressReport(item.id);
-                currentProjectTasks = mainFrame.getTaskService().getTasksByProject(item.id);
+                clearReportFields();
+                try {
+                    tasks = mainFrame.getTaskService().getTasksByProject(item.id);
+                    currentReport = mainFrame.getReportService().getProjectProgressReport(item.id);
+                } catch (ValidationException e) {
+                    currentReport = null;
+                }
                 return null;
             }
 
@@ -653,30 +750,42 @@ public class ReportsView extends BaseView {
                         completionProgressBar.setValue(compRate);
                         completionPercentageLabel.setText("Project Completion Rate: " + currentReport.getCompletionPercentage() + "%");
 
-                        tableModel.setRowCount(0);
-                        DateTimeFormatter dtf = DateTimeFormatter.ofPattern("yyyy-MM-dd");
+                        if (compRate >= 100) {
+                            completionProgressBar.setForeground(ThemeManager.COLOR_SUCCESS);
+                        } else if (compRate > 50) {
+                            completionProgressBar.setForeground(ThemeManager.COLOR_PRIMARY_HOVER);
+                        } else {
+                            completionProgressBar.setForeground(ThemeManager.COLOR_WARNING);
+                        }
+                    }
 
-                        for (Task t : currentProjectTasks) {
-                            String empName = "Unassigned";
-                            if (t.getAssignedEmployeeId() != null) {
-                                Optional<User> u = allUsersList.stream().filter(usr -> usr.getId() == t.getAssignedEmployeeId()).findFirst();
-                                if (u.isPresent()) {
-                                    empName = u.get().getFullName();
+                    currentProjectTasks = tasks;
+                    tableModel.setRowCount(0);
+
+                    DateTimeFormatter dtf = DateTimeFormatter.ofPattern("yyyy-MM-dd");
+                    for (Task t : tasks) {
+                        String empName = "Unassigned";
+                        if (t.getAssignedEmployeeId() != null && t.getAssignedEmployeeId() > 0) {
+                            for (User u : allUsersList) {
+                                if (u.getId() == t.getAssignedEmployeeId()) {
+                                    empName = u.getFullName();
+                                    break;
                                 }
                             }
-                            tableModel.addRow(new Object[]{
-                                    t.getId(),
-                                    t.getName(),
-                                    empName,
-                                    t.getPriority().name(),
-                                    t.getDeadline() != null ? t.getDeadline().format(dtf) : "",
-                                    t.getStatus().name()
-                            });
                         }
-                        exportButton.setEnabled(true);
+                        String deadlineStr = t.getDeadline() != null ? t.getDeadline().format(dtf) : "No Deadline";
+
+                        tableModel.addRow(new Object[]{
+                                t.getId(),
+                                t.getName(),
+                                empName,
+                                t.getPriority().toString(),
+                                deadlineStr,
+                                t.getStatus().toString()
+                        });
                     }
-                } catch (Exception ex) {
-                    System.err.println("Failed to compile project progress metrics: " + ex.getMessage());
+                } catch (Exception e) {
+                    System.err.println("Error rendering project report details: " + e.getMessage());
                 }
             }
         };
@@ -692,7 +801,6 @@ public class ReportsView extends BaseView {
         completionProgressBar.setValue(0);
         completionPercentageLabel.setText("Project Completion Rate: 0.0%");
         tableModel.setRowCount(0);
-        exportButton.setEnabled(false);
     }
 
     private void handleExportCSV() {
@@ -704,18 +812,17 @@ public class ReportsView extends BaseView {
 
         int userSelection = fileChooser.showSaveDialog(this);
         if (userSelection == JFileChooser.APPROVE_OPTION) {
-            File fileToSave = fileChooser.getSelectedFile();
-
-            if (!fileToSave.getName().toLowerCase().endsWith(".csv")) {
-                fileToSave = new File(fileToSave.getAbsolutePath() + ".csv");
+            File selectedFile = fileChooser.getSelectedFile();
+            if (!selectedFile.getName().toLowerCase().endsWith(".csv")) {
+                selectedFile = new File(selectedFile.getAbsolutePath() + ".csv");
             }
 
-            File finalFile = fileToSave;
-            SwingWorker<Void, Void> worker = new SwingWorker<>() {
+            final File finalFile = selectedFile;
+            SwingWorker<Boolean, Void> exportWorker = new SwingWorker<>() {
                 @Override
-                protected Void doInBackground() throws Exception {
+                protected Boolean doInBackground() throws Exception {
                     CSVExporter.exportProjectReport(currentReport, currentProjectTasks, allUsersList, finalFile);
-                    return null;
+                    return true;
                 }
 
                 @Override
@@ -724,17 +831,17 @@ public class ReportsView extends BaseView {
                         get();
                         JOptionPane.showMessageDialog(ReportsView.this,
                                 "Project report CSV exported successfully to:\n" + finalFile.getAbsolutePath(),
-                                "Export Complete",
+                                "Export Successful",
                                 JOptionPane.INFORMATION_MESSAGE);
-                    } catch (Exception e) {
+                    } catch (Exception ex) {
                         JOptionPane.showMessageDialog(ReportsView.this,
-                                "Failed to write CSV file. Make sure file is not open elsewhere and path is writable.",
-                                "Write Error",
+                                "Failed to export report: " + ex.getMessage(),
+                                "Export Error",
                                 JOptionPane.ERROR_MESSAGE);
                     }
                 }
             };
-            worker.execute();
+            exportWorker.execute();
         }
     }
 }

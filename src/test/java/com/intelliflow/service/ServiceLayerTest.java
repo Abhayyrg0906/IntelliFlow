@@ -24,6 +24,7 @@ public class ServiceLayerTest {
     private UserService userService;
     private ProjectService projectService;
     private TaskService taskService;
+    private ReportService reportService;
 
     // In-Memory DAO Stubs for fast database-independent testing
     private static class InMemoryUserDAO implements UserDAO {
@@ -319,6 +320,7 @@ public class ServiceLayerTest {
         userService = new UserServiceImpl(userDAO, logDAO);
         projectService = new ProjectServiceImpl(projectDAO, logDAO);
         taskService = new TaskServiceImpl(taskDAO, projectDAO, userDAO, notificationDAO, logDAO);
+        reportService = new ReportServiceImpl(projectDAO, taskDAO, userDAO);
     }
 
     // 1. Password Strength Validation Tests
@@ -1281,5 +1283,158 @@ public class ServiceLayerTest {
         // Employee 1 sees activity for their assigned task (Login Module)
         List<ActivityLog> emp1Logs = uService.getActivityLogsForUser(employee1);
         assertTrue(emp1Logs.stream().anyMatch(l -> l.getDescription().contains("Login Module")));
+    }
+
+    // 16. Advanced Real-Data Analytics & Role Visibility Tests (Phase 7)
+    @Test
+    public void testAdvancedAnalyticsAndRoleVisibility() throws DatabaseException, ValidationException {
+        UserDAO uDAO = new InMemoryUserDAO();
+        ProjectDAO pDAO = new InMemoryProjectDAO();
+        TaskDAO tDAO = new InMemoryTaskDAO();
+        NotificationDAO nDAO = new InMemoryNotificationDAO();
+        ActivityLogDAO lDAO = new InMemoryActivityLogDAO();
+
+        UserService uService = new UserServiceImpl(uDAO, lDAO);
+        ProjectService pService = new ProjectServiceImpl(pDAO, lDAO);
+        TaskService tService = new TaskServiceImpl(tDAO, pDAO, uDAO, nDAO, lDAO);
+        ReportService rService = new ReportServiceImpl(pDAO, tDAO, uDAO);
+
+        LocalDate today = LocalDate.of(2026, 9, 5);
+
+        // 1. Setup Users
+        User admin = uService.register(new User(0, "adminUser", "admin@test.com", "", Role.ADMIN, "Admin User", LocalDateTime.now()), "Pass123!@#");
+        User mgr1 = uService.register(new User(0, "mgr1", "mgr1@test.com", "", Role.MANAGER, "Manager One", LocalDateTime.now()), "Pass123!@#");
+        User mgr2 = uService.register(new User(0, "mgr2", "mgr2@test.com", "", Role.MANAGER, "Manager Two", LocalDateTime.now()), "Pass123!@#");
+        User emp1 = uService.register(new User(0, "emp1", "emp1@test.com", "", Role.EMPLOYEE, "Employee One", LocalDateTime.now()), "Pass123!@#");
+        User emp2 = uService.register(new User(0, "emp2", "emp2@test.com", "", Role.EMPLOYEE, "Employee Two", LocalDateTime.now()), "Pass123!@#");
+
+        // 2. Setup Projects
+        UserSession.getInstance().startSession(admin);
+        Project p1 = new Project();
+        p1.setName("IntelliFlow Core");
+        p1.setManagerId(mgr1.getId());
+        p1.setStartDate(today.minusDays(10));
+        p1.setDeadline(today.plusDays(20));
+        p1.setStatus(ProjectStatus.ACTIVE);
+        p1 = pService.createProject(p1);
+
+        Project p2 = new Project();
+        p2.setName("Mobile App");
+        p2.setManagerId(mgr2.getId());
+        p2.setStartDate(today.minusDays(5));
+        p2.setDeadline(today.minusDays(1)); // Overdue project deadline -> DELAYED
+        p2.setStatus(ProjectStatus.ACTIVE);
+        p2 = pService.createProject(p2);
+
+        // 3. Setup Tasks for Project 1 (Managed by mgr1)
+        UserSession.getInstance().startSession(mgr1);
+        // Task 1: Completed, LOW priority
+        Task t1 = new Task();
+        t1.setProjectId(p1.getId());
+        t1.setName("Setup DB");
+        t1.setPriority(TaskPriority.LOW);
+        t1.setStatus(TaskStatus.COMPLETED);
+        t1.setAssignedEmployeeId(emp1.getId());
+        t1.setDeadline(today.minusDays(2));
+        tService.createTask(t1);
+
+        // Task 2: In Progress, CRITICAL priority, due in 1 day (Due Soon)
+        Task t2 = new Task();
+        t2.setProjectId(p1.getId());
+        t2.setName("Auth Module");
+        t2.setPriority(TaskPriority.CRITICAL);
+        t2.setStatus(TaskStatus.IN_PROGRESS);
+        t2.setAssignedEmployeeId(emp1.getId());
+        t2.setDeadline(today.plusDays(1));
+        tService.createTask(t2);
+
+        // Task 3: Testing, HIGH priority, due in 5 days
+        Task t3 = new Task();
+        t3.setProjectId(p1.getId());
+        t3.setName("API Testing");
+        t3.setPriority(TaskPriority.HIGH);
+        t3.setStatus(TaskStatus.TESTING);
+        t3.setAssignedEmployeeId(emp2.getId());
+        t3.setDeadline(today.plusDays(5));
+        tService.createTask(t3);
+
+        // Task 4: To Do, MEDIUM priority, overdue
+        Task t4 = new Task();
+        t4.setProjectId(p1.getId());
+        t4.setName("Documentation");
+        t4.setPriority(TaskPriority.MEDIUM);
+        t4.setStatus(TaskStatus.TO_DO);
+        t4.setAssignedEmployeeId(emp2.getId());
+        t4.setDeadline(today.minusDays(1)); // Overdue
+        tService.createTask(t4);
+
+        // 4. Setup Tasks for Project 2 (Managed by mgr2)
+        UserSession.getInstance().startSession(mgr2);
+        Task t5 = new Task();
+        t5.setProjectId(p2.getId());
+        t5.setName("UI Mockups");
+        t5.setPriority(TaskPriority.MEDIUM);
+        t5.setStatus(TaskStatus.COMPLETED);
+        t5.setAssignedEmployeeId(emp2.getId());
+        t5.setDeadline(today.minusDays(3));
+        tService.createTask(t5);
+
+        // ============================================
+        // A. ADMIN ANALYTICS (System-wide: 5 tasks total, 2 projects)
+        // ============================================
+        AnalyticsSummary adminSummary = rService.getAnalyticsSummary(admin, today);
+        assertEquals(5, adminSummary.getTotalTasks());
+        assertEquals(2, adminSummary.getCompletedTasks());
+        assertEquals(40.0, adminSummary.getTaskCompletionRate()); // 2/5 = 40.0%
+        assertEquals(1, adminSummary.getOverdueTaskCount()); // t4 is overdue
+        assertEquals(1, adminSummary.getDueSoonTaskCount()); // t2 is due in 1 day
+
+        // Priority distribution
+        assertEquals(1, adminSummary.getPriorityDistribution().get(TaskPriority.CRITICAL));
+        assertEquals(1, adminSummary.getPriorityDistribution().get(TaskPriority.HIGH));
+        assertEquals(2, adminSummary.getPriorityDistribution().get(TaskPriority.MEDIUM));
+        assertEquals(1, adminSummary.getPriorityDistribution().get(TaskPriority.LOW));
+
+        // Status distribution
+        assertEquals(1, adminSummary.getStatusDistribution().get(TaskStatus.TO_DO));
+        assertEquals(1, adminSummary.getStatusDistribution().get(TaskStatus.IN_PROGRESS));
+        assertEquals(1, adminSummary.getStatusDistribution().get(TaskStatus.TESTING));
+        assertEquals(2, adminSummary.getStatusDistribution().get(TaskStatus.COMPLETED));
+
+        // Project progress & health
+        assertEquals(2, adminSummary.getProjectProgressList().size());
+        assertEquals(2, adminSummary.getEmployeeWorkloads().size());
+
+        // ============================================
+        // B. MANAGER 1 ANALYTICS (Scoped to Project 1: 4 tasks)
+        // ============================================
+        AnalyticsSummary mgr1Summary = rService.getAnalyticsSummary(mgr1, today);
+        assertEquals(4, mgr1Summary.getTotalTasks());
+        assertEquals(1, mgr1Summary.getCompletedTasks());
+        assertEquals(25.0, mgr1Summary.getTaskCompletionRate()); // 1/4 = 25.0%
+        assertEquals(1, mgr1Summary.getOverdueTaskCount());
+        assertEquals(1, mgr1Summary.getDueSoonTaskCount());
+        assertEquals(1, mgr1Summary.getProjectProgressList().size());
+        assertEquals("IntelliFlow Core", mgr1Summary.getProjectProgressList().get(0).getProjectName());
+
+        // ============================================
+        // C. EMPLOYEE 1 ANALYTICS (Scoped to emp1 assigned tasks: t1, t2)
+        // ============================================
+        AnalyticsSummary emp1Summary = rService.getAnalyticsSummary(emp1, today);
+        assertEquals(2, emp1Summary.getTotalTasks());
+        assertEquals(1, emp1Summary.getCompletedTasks());
+        assertEquals(50.0, emp1Summary.getTaskCompletionRate()); // 1/2 = 50.0%
+        assertEquals(0, emp1Summary.getOverdueTaskCount());
+        assertEquals(1, emp1Summary.getDueSoonTaskCount()); // t2 is due soon
+        assertEquals(1, emp1Summary.getPriorityDistribution().get(TaskPriority.CRITICAL));
+        assertEquals(1, emp1Summary.getPriorityDistribution().get(TaskPriority.LOW));
+
+        // ============================================
+        // D. Visual ASCII Progress Track Formatting
+        // ============================================
+        String progressVisual = com.intelliflow.ui.views.ReportsView.formatAsciiProgressBar(78.0);
+        assertTrue(progressVisual.contains("78%"));
+        assertTrue(progressVisual.contains("█"));
+        assertTrue(progressVisual.contains("░"));
     }
 }
