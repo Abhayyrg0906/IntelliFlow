@@ -186,10 +186,6 @@ public class TaskServiceImpl implements TaskService {
         if (!ValidationUtil.isNotEmpty(task.getName())) {
             throw new ValidationException("Task name is required.");
         }
-        if (task.getDeadline() == null) {
-            throw new ValidationException("Task deadline is required.");
-        }
-
         // Validate association with project
         Optional<Project> projectOpt = projectDAO.findById(task.getProjectId());
         if (projectOpt.isEmpty()) {
@@ -197,14 +193,16 @@ public class TaskServiceImpl implements TaskService {
         }
         Project project = projectOpt.get();
 
-        // Constraint: Task deadline cannot exceed the project's deadline
-        if (task.getDeadline().isAfter(project.getDeadline())) {
-            throw new ValidationException("Task deadline (" + task.getDeadline() + ") cannot be after project deadline (" + project.getDeadline() + ").");
-        }
+        if (task.getDeadline() != null) {
+            // Constraint: Task deadline cannot exceed the project's deadline
+            if (project.getDeadline() != null && task.getDeadline().isAfter(project.getDeadline())) {
+                throw new ValidationException("Task deadline (" + task.getDeadline() + ") cannot be after project deadline (" + project.getDeadline() + ").");
+            }
 
-        // Constraint: Task deadline cannot be before project start date
-        if (task.getDeadline().isBefore(project.getStartDate())) {
-            throw new ValidationException("Task deadline cannot be before project start date (" + project.getStartDate() + ").");
+            // Constraint: Task deadline cannot be before project start date
+            if (project.getStartDate() != null && task.getDeadline().isBefore(project.getStartDate())) {
+                throw new ValidationException("Task deadline cannot be before project start date (" + project.getStartDate() + ").");
+            }
         }
 
         // Validate assigned employee

@@ -501,29 +501,35 @@ public class ReportsView extends BaseView {
         alertTable.setPlaceholderText("All assigned tasks completed! Great job.");
         alertTable.setModel(employeeModel);
 
-        // Filter active tasks and sort by deadline
         List<Task> activeTasks = tasks.stream()
                 .filter(t -> t.getStatus() != TaskStatus.COMPLETED)
-                .sorted(Comparator.comparing(Task::getDeadline))
+                .sorted(Comparator.comparing(Task::getDeadline, Comparator.nullsLast(Comparator.naturalOrder())))
                 .collect(Collectors.toList());
 
         DateTimeFormatter dtf = DateTimeFormatter.ofPattern("yyyy-MM-dd");
         for (Task t : activeTasks) {
             String daysRemaining;
-            long diff = java.time.temporal.ChronoUnit.DAYS.between(LocalDate.now(), t.getDeadline());
-            if (diff < 0) {
-                daysRemaining = "OVERDUE (" + Math.abs(diff) + " days ago)";
-            } else if (diff == 0) {
-                daysRemaining = "DUE TODAY";
+            String deadlineStr;
+            if (t.getDeadline() == null) {
+                daysRemaining = "No Deadline";
+                deadlineStr = "No Deadline";
             } else {
-                daysRemaining = diff + " days left";
+                long diff = java.time.temporal.ChronoUnit.DAYS.between(LocalDate.now(), t.getDeadline());
+                if (diff < 0) {
+                    daysRemaining = "OVERDUE (" + Math.abs(diff) + " days ago)";
+                } else if (diff == 0) {
+                    daysRemaining = "DUE TODAY";
+                } else {
+                    daysRemaining = diff + " days left";
+                }
+                deadlineStr = t.getDeadline().format(dtf);
             }
 
             employeeModel.addRow(new Object[]{
                     t.getId(),
                     t.getName(),
                     t.getPriority().toString(),
-                    t.getDeadline().format(dtf),
+                    deadlineStr,
                     daysRemaining,
                     t.getStatus().toString()
             });

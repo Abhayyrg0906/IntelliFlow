@@ -819,7 +819,7 @@ public class ProjectManagementView extends BaseView {
                     t.getName(),
                     t.getPriority().toString(),
                     empAssignedName,
-                    t.getDeadline().toString(),
+                    t.getDeadline() != null ? t.getDeadline().toString() : "No Deadline",
                     t.getStatus().toString()
             });
         }
@@ -1299,7 +1299,10 @@ public class ProjectManagementView extends BaseView {
             }
 
             try {
-                LocalDate deadline = LocalDate.parse(deadlineStr, dtf);
+                LocalDate deadline = null;
+                if (!deadlineStr.isEmpty()) {
+                    deadline = LocalDate.parse(deadlineStr, dtf);
+                }
 
                 Task t = isEdit ? task : new Task();
                 t.setName(name);
@@ -1399,8 +1402,8 @@ public class ProjectManagementView extends BaseView {
 
         // Due Date
         gbc.gridy++;
-        boolean isOverdue = task.getStatus() != TaskStatus.COMPLETED && task.getDeadline().isBefore(LocalDate.now());
-        JLabel dateLabel = new JLabel("📅 Due Date:  " + task.getDeadline().toString());
+        boolean isOverdue = task.getStatus() != TaskStatus.COMPLETED && task.getDeadline() != null && task.getDeadline().isBefore(LocalDate.now());
+        JLabel dateLabel = new JLabel("📅 Due Date:  " + (task.getDeadline() != null ? task.getDeadline().toString() : "No Deadline"));
         dateLabel.setFont(ThemeManager.FONT_BODY);
         dateLabel.setForeground(isOverdue ? ThemeManager.COLOR_DANGER : ThemeManager.COLOR_TEXT_PRIMARY);
         contentPanel.add(dateLabel, gbc);

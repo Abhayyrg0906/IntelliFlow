@@ -697,7 +697,7 @@ public class TaskManagementView extends BaseView {
                     prjName,
                     empName,
                     t.getPriority().toString(),
-                    t.getDeadline().toString(),
+                    t.getDeadline() != null ? t.getDeadline().toString() : "No Deadline",
                     t.getStatus().toString()
             });
         }
@@ -722,10 +722,13 @@ public class TaskManagementView extends BaseView {
 
         LocalDate today = LocalDate.now();
 
-        for (Task t : displayedTasks) {
-            JPanel card = createTaskCard(t);
-            cardPanels.add((RoundedPanel) card);
+        List<Task> todoTasks = new ArrayList<>();
+        List<Task> progressTasks = new ArrayList<>();
+        List<Task> testingTasks = new ArrayList<>();
+        List<Task> completedTasksList = new ArrayList<>();
+        List<Task> blockedTasks = new ArrayList<>();
 
+        for (Task t : displayedTasks) {
             // Calculate attention stats (only for non-completed tasks)
             if (t.getStatus() != TaskStatus.COMPLETED) {
                 if (t.getPriority() == TaskPriority.CRITICAL) {
@@ -744,12 +747,56 @@ public class TaskManagementView extends BaseView {
             }
 
             switch (t.getStatus()) {
-                case TO_DO -> { todoColPanel.add(card); todoColPanel.add(Box.createVerticalStrut(10)); todoCount++; }
-                case IN_PROGRESS -> { progressColPanel.add(card); progressColPanel.add(Box.createVerticalStrut(10)); progressCount++; }
-                case TESTING -> { testingColPanel.add(card); testingColPanel.add(Box.createVerticalStrut(10)); testingCount++; }
-                case COMPLETED -> { completedColPanel.add(card); completedColPanel.add(Box.createVerticalStrut(10)); completedCount++; }
-                case BLOCKED -> { blockedColPanel.add(card); blockedColPanel.add(Box.createVerticalStrut(10)); blockedCount++; }
+                case TO_DO -> todoTasks.add(t);
+                case IN_PROGRESS -> progressTasks.add(t);
+                case TESTING -> testingTasks.add(t);
+                case COMPLETED -> completedTasksList.add(t);
+                case BLOCKED -> blockedTasks.add(t);
             }
+        }
+
+        // Sort each column individually in Recommended order (Priority then Deadline)
+        todoTasks.sort(com.intelliflow.util.TaskSorter.RECOMMENDED_COMPARATOR);
+        progressTasks.sort(com.intelliflow.util.TaskSorter.RECOMMENDED_COMPARATOR);
+        testingTasks.sort(com.intelliflow.util.TaskSorter.RECOMMENDED_COMPARATOR);
+        completedTasksList.sort(com.intelliflow.util.TaskSorter.RECOMMENDED_COMPARATOR);
+        blockedTasks.sort(com.intelliflow.util.TaskSorter.RECOMMENDED_COMPARATOR);
+
+        // Add elements to UI Panels
+        for (Task t : todoTasks) {
+            JPanel card = createTaskCard(t);
+            cardPanels.add((RoundedPanel) card);
+            todoColPanel.add(card);
+            todoColPanel.add(Box.createVerticalStrut(10));
+            todoCount++;
+        }
+        for (Task t : progressTasks) {
+            JPanel card = createTaskCard(t);
+            cardPanels.add((RoundedPanel) card);
+            progressColPanel.add(card);
+            progressColPanel.add(Box.createVerticalStrut(10));
+            progressCount++;
+        }
+        for (Task t : testingTasks) {
+            JPanel card = createTaskCard(t);
+            cardPanels.add((RoundedPanel) card);
+            testingColPanel.add(card);
+            testingColPanel.add(Box.createVerticalStrut(10));
+            testingCount++;
+        }
+        for (Task t : completedTasksList) {
+            JPanel card = createTaskCard(t);
+            cardPanels.add((RoundedPanel) card);
+            completedColPanel.add(card);
+            completedColPanel.add(Box.createVerticalStrut(10));
+            completedCount++;
+        }
+        for (Task t : blockedTasks) {
+            JPanel card = createTaskCard(t);
+            cardPanels.add((RoundedPanel) card);
+            blockedColPanel.add(card);
+            blockedColPanel.add(Box.createVerticalStrut(10));
+            blockedCount++;
         }
 
         // Update attention labels with values and dynamic colored feedback
@@ -1282,7 +1329,10 @@ public class TaskManagementView extends BaseView {
             }
 
             try {
-                LocalDate deadline = LocalDate.parse(deadlineStr, dtf);
+                LocalDate deadline = null;
+                if (!deadlineStr.isEmpty()) {
+                    deadline = LocalDate.parse(deadlineStr, dtf);
+                }
 
                 Task t = isEdit ? task : new Task();
                 t.setName(name);
@@ -1386,8 +1436,8 @@ public class TaskManagementView extends BaseView {
 
         // Due Date
         gbc.gridy++;
-        boolean isOverdue = task.getStatus() != TaskStatus.COMPLETED && task.getDeadline().isBefore(LocalDate.now());
-        JLabel dateLabel = new JLabel("📅 Due Date:  " + task.getDeadline().toString());
+        boolean isOverdue = task.getStatus() != TaskStatus.COMPLETED && task.getDeadline() != null && task.getDeadline().isBefore(LocalDate.now());
+        JLabel dateLabel = new JLabel("📅 Due Date:  " + (task.getDeadline() != null ? task.getDeadline().toString() : "No Deadline"));
         dateLabel.setFont(ThemeManager.FONT_BODY);
         dateLabel.setForeground(isOverdue ? ThemeManager.COLOR_DANGER : ThemeManager.COLOR_TEXT_PRIMARY);
         contentPanel.add(dateLabel, gbc);

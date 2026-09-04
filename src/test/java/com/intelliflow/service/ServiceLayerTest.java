@@ -709,4 +709,78 @@ public class ServiceLayerTest {
         // t1 (no deadline) comes last
         assertEquals("Task Low No Deadline", tasks.get(6).getName());
     }
+
+    @Test
+    public void testTaskOptionalDeadlineAndPrioritySorting() throws Exception {
+        // Create user/project to support task creation
+        User manager = new User();
+        manager.setUsername("sortingmanager");
+        manager.setEmail("sortingmanager@intelliflow.com");
+        manager.setRole(Role.MANAGER);
+        manager.setFullName("Sorting Manager");
+        User savedManager = userService.register(manager, "Password123!");
+
+        // Security context - manager is active user
+        UserSession.getInstance().startSession(savedManager);
+
+        Project p = new Project();
+        p.setName("Sorting Project");
+        p.setDescription("Project to test priority sorting");
+        p.setManagerId(savedManager.getId());
+        p.setStartDate(LocalDate.of(2026, 9, 1));
+        p.setDeadline(LocalDate.of(2026, 9, 30));
+        p.setStatus(ProjectStatus.ACTIVE);
+        Project savedProj = projectService.createProject(p);
+
+        // 1. Create a task without a deadline
+        Task taskNoDeadline = new Task();
+        taskNoDeadline.setProjectId(savedProj.getId());
+        taskNoDeadline.setName("Task with null deadline");
+        taskNoDeadline.setPriority(TaskPriority.HIGH);
+        taskNoDeadline.setDeadline(null);
+        taskNoDeadline.setStatus(TaskStatus.TO_DO);
+
+        Task savedTaskNoDeadline = taskService.createTask(taskNoDeadline);
+        assertNotNull(savedTaskNoDeadline);
+        assertNull(savedTaskNoDeadline.getDeadline());
+
+        // 2. Perform same-priority and mixed sorting validation
+        Task tCritical = new Task();
+        tCritical.setName("Critical Due Today");
+        tCritical.setPriority(TaskPriority.CRITICAL);
+        tCritical.setDeadline(LocalDate.now());
+
+        Task tCriticalLater = new Task();
+        tCriticalLater.setName("Critical Due Tomorrow");
+        tCriticalLater.setPriority(TaskPriority.CRITICAL);
+        tCriticalLater.setDeadline(LocalDate.now().plusDays(1));
+
+        Task tHighDeadline = new Task();
+        tHighDeadline.setName("High Due Tomorrow");
+        tHighDeadline.setPriority(TaskPriority.HIGH);
+        tHighDeadline.setDeadline(LocalDate.now().plusDays(1));
+
+        Task tHighNoDeadline = new Task();
+        tHighNoDeadline.setName("High No Deadline");
+        tHighNoDeadline.setPriority(TaskPriority.HIGH);
+        tHighNoDeadline.setDeadline(null);
+
+        List<Task> sortingTasks = new java.util.ArrayList<>(List.of(
+            tHighNoDeadline, tCriticalLater, tHighDeadline, tCritical
+        ));
+
+        // Sort using RECOMMENDED_COMPARATOR
+        sortingTasks.sort(com.intelliflow.util.TaskSorter.RECOMMENDED_COMPARATOR);
+
+        // Expected sorted order:
+        // 1. Critical Due Today (tCritical)
+        // 2. Critical Due Tomorrow (tCriticalLater)
+        // 3. High Due Tomorrow (tHighDeadline)
+        // 4. High No Deadline (tHighNoDeadline)
+
+        assertEquals("Critical Due Today", sortingTasks.get(0).getName());
+        assertEquals("Critical Due Tomorrow", sortingTasks.get(1).getName());
+        assertEquals("High Due Tomorrow", sortingTasks.get(2).getName());
+        assertEquals("High No Deadline", sortingTasks.get(3).getName());
+    }
 }

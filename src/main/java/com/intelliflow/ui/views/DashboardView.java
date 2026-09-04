@@ -569,7 +569,7 @@ public class DashboardView extends BaseView {
                     adminProjRows = allProjects.stream().limit(5).map(p -> new String[]{
                             p.getName(),
                             p.getManagerId() != null ? userNames.getOrDefault(p.getManagerId(), "Unknown") : "Unassigned",
-                            p.getDeadline().toString(),
+                            p.getDeadline() != null ? p.getDeadline().toString() : "No Deadline",
                             p.getStatus().name()
                     }).collect(Collectors.toList());
 
@@ -624,7 +624,7 @@ public class DashboardView extends BaseView {
                     mgrProjRows = managed.stream().limit(5).map(p -> new String[]{
                             p.getName(),
                             p.getStartDate().toString(),
-                            p.getDeadline().toString(),
+                            p.getDeadline() != null ? p.getDeadline().toString() : "No Deadline",
                             p.getStatus().name()
                     }).collect(Collectors.toList());
 
@@ -668,19 +668,19 @@ public class DashboardView extends BaseView {
                                     t.getName(),
                                     projectNames.getOrDefault(t.getProjectId(), "Unknown"),
                                     t.getPriority().name(),
-                                    t.getDeadline().toString(),
+                                    t.getDeadline() != null ? t.getDeadline().toString() : "No Deadline",
                                     t.getStatus().name()
                             }).collect(Collectors.toList());
 
                     // Upcoming Priorities (due in next 7 days, sorted by deadline)
                     empUpcomingRows = assigned.stream()
                             .filter(t -> t.getStatus() != TaskStatus.COMPLETED)
-                            .sorted((t1, t2) -> t1.getDeadline().compareTo(t2.getDeadline()))
+                            .sorted((t1, t2) -> com.intelliflow.util.TaskSorter.compareDeadline(t1, t2))
                             .limit(5)
                             .map(t -> new String[]{
                                     t.getName(),
                                     projectNames.getOrDefault(t.getProjectId(), "Unknown"),
-                                    t.getDeadline().toString(),
+                                    t.getDeadline() != null ? t.getDeadline().toString() : "No Deadline",
                                     t.getStatus().name()
                             }).collect(Collectors.toList());
 
@@ -691,7 +691,7 @@ public class DashboardView extends BaseView {
                             .map(t -> new String[]{
                                     t.getName(),
                                     projectNames.getOrDefault(t.getProjectId(), "Unknown"),
-                                    t.getDeadline().toString(),
+                                    t.getDeadline() != null ? t.getDeadline().toString() : "No Deadline",
                                     t.getStatus().name()
                             }).collect(Collectors.toList());
                 }
