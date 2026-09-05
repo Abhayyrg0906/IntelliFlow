@@ -527,6 +527,9 @@ public class DeadlinesView extends BaseView {
         JButton commentBtn = createActionButton("💬", "Comments & Collaboration", e -> openTaskComments(t));
         actionsPanel.add(commentBtn);
 
+        JButton attachBtn = createActionButton("📎", "Attachments & Files", e -> openTaskAttachments(t));
+        actionsPanel.add(attachBtn);
+
         card.add(actionsPanel, BorderLayout.EAST);
 
         return card;
@@ -556,6 +559,13 @@ public class DeadlinesView extends BaseView {
         TaskManagementView taskView = (TaskManagementView) mainFrame.getView("tasks");
         if (taskView != null) {
             taskView.showTaskCommentsDialog(task);
+        }
+    }
+
+    private void openTaskAttachments(Task task) {
+        TaskManagementView taskView = (TaskManagementView) mainFrame.getView("tasks");
+        if (taskView != null) {
+            taskView.showTaskAttachmentsDialog(task);
         }
     }
 

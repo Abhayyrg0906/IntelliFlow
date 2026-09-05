@@ -7,6 +7,7 @@ import com.intelliflow.exception.*;
 import com.intelliflow.model.*;
 import com.intelliflow.service.impl.*;
 import com.intelliflow.service.interfaces.*;
+import com.intelliflow.util.FileStorageUtil;
 import com.intelliflow.util.PasswordUtil;
 import com.intelliflow.util.ValidationUtil;
 import com.intelliflow.util.WorkloadUtil;
@@ -14,6 +15,10 @@ import com.intelliflow.util.WorkloadUtil;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.io.File;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.*;
@@ -361,6 +366,64 @@ public class ServiceLayerTest {
         @Override
         public void delete(int id) {
             comments.remove(id);
+        }
+    }
+
+    private static class InMemoryAttachmentDAO implements AttachmentDAO {
+        private final Map<Integer, Attachment> attachments = new HashMap<>();
+        private int idSequence = 1;
+
+        private Attachment copy(Attachment a) {
+            if (a == null) return null;
+            Attachment cp = new Attachment();
+            cp.setId(a.getId());
+            cp.setTaskId(a.getTaskId());
+            cp.setUserId(a.getUserId());
+            cp.setFilename(a.getFilename());
+            cp.setStoredFilename(a.getStoredFilename());
+            cp.setFileSize(a.getFileSize());
+            cp.setFileType(a.getFileType());
+            cp.setCreatedAt(a.getCreatedAt());
+            cp.setUploaderName(a.getUploaderName());
+            cp.setUploaderRole(a.getUploaderRole());
+            return cp;
+        }
+
+        @Override
+        public Optional<Attachment> findById(int id) {
+            return Optional.ofNullable(copy(attachments.get(id)));
+        }
+
+        @Override
+        public List<Attachment> findByTaskId(int taskId) {
+            return attachments.values().stream()
+                    .filter(a -> a.getTaskId() == taskId)
+                    .sorted(Comparator.comparing(Attachment::getCreatedAt))
+                    .map(this::copy)
+                    .collect(Collectors.toList());
+        }
+
+        @Override
+        public List<Attachment> findAll() {
+            return attachments.values().stream()
+                    .sorted(Comparator.comparing(Attachment::getCreatedAt))
+                    .map(this::copy)
+                    .collect(Collectors.toList());
+        }
+
+        @Override
+        public Attachment create(Attachment attachment) {
+            attachment.setId(idSequence++);
+            if (attachment.getCreatedAt() == null) {
+                attachment.setCreatedAt(LocalDateTime.now());
+            }
+            attachments.put(attachment.getId(), copy(attachment));
+            return copy(attachment);
+        }
+
+        @Override
+        public void delete(int id) {
+            attachments.remove(id);
         }
     }
 
@@ -1979,6 +2042,175 @@ public class ServiceLayerTest {
         // 4. Safe handling of empty and null lists
         assertTrue(com.intelliflow.util.DeadlineTimelineUtil.groupTasksByDeadline(Collections.emptyList(), today).isEmpty());
         assertTrue(com.intelliflow.util.DeadlineTimelineUtil.groupTasksByDeadline(null, today).isEmpty());
+    }
+
+    @Test
+    public void testTaskAttachmentsValidationAndAuthorization() throws Exception {
+        // 1. Setup isolated temporary directory for attachments storage
+        Path tempDir = Files.createTempDirectory("intelliflow_test_attachments");
+        FileStorageUtil.setStorageDirectory(tempDir);
+
+        // 2. Setup DAOs and Services
+        InMemoryUserDAO uDao = new InMemoryUserDAO();
+        InMemoryProjectDAO pDao = new InMemoryProjectDAO();
+        InMemoryTaskDAO tDao = new InMemoryTaskDAO();
+        InMemoryNotificationDAO nDao = new InMemoryNotificationDAO();
+        InMemoryActivityLogDAO lDao = new InMemoryActivityLogDAO();
+        InMemoryAttachmentDAO aDao = new InMemoryAttachmentDAO();
+
+        AttachmentService attachmentService = new AttachmentServiceImpl(aDao, tDao, pDao, uDao, nDao, lDao);
+
+        // 3. Setup Users
+        User admin = uDao.create(new User(1, "admin", "admin@iflow.com", "hash", Role.ADMIN, "Admin User", LocalDateTime.now()));
+        User mgr1 = uDao.create(new User(2, "manager1", "rahul@iflow.com", "hash", Role.MANAGER, "Rahul Sharma", LocalDateTime.now()));
+        User mgr2 = uDao.create(new User(3, "manager2", "kavita@iflow.com", "hash", Role.MANAGER, "Kavita Rao", LocalDateTime.now()));
+        User emp1 = uDao.create(new User(4, "emp1", "priya@iflow.com", "hash", Role.EMPLOYEE, "Priya Patel", LocalDateTime.now()));
+        User emp2 = uDao.create(new User(5, "emp2", "vikram@iflow.com", "hash", Role.EMPLOYEE, "Vikram Singh", LocalDateTime.now()));
+
+        // 4. Setup Projects and Tasks
+        Project p1 = pDao.create(new Project(1, "IntelliFlow Core", "Platform engine", mgr1.getId(), LocalDate.now(), LocalDate.now().plusDays(30), ProjectStatus.ACTIVE, LocalDateTime.now()));
+        Task t1 = tDao.create(new Task(1, p1.getId(), "Login Module", "Build auth flow", emp1.getId(), TaskPriority.HIGH, LocalDate.now().plusDays(5), TaskStatus.IN_PROGRESS, LocalDateTime.now(), LocalDateTime.now()));
+
+        // 5. Test File Validation Helpers
+        assertEquals("📄", FileStorageUtil.getFileIcon("requirements.pdf"));
+        assertEquals("📊", FileStorageUtil.getFileIcon("database.xlsx"));
+        assertEquals("🖼️", FileStorageUtil.getFileIcon("login-ui.png"));
+        assertEquals("📦", FileStorageUtil.getFileIcon("archive.zip"));
+        assertEquals("📜", FileStorageUtil.getFileIcon("schema.sql"));
+        assertEquals("📁", FileStorageUtil.getFileIcon("unknown.dat"));
+
+        assertEquals("500 B", FileStorageUtil.formatFileSize(500));
+        assertEquals("1.5 KB", FileStorageUtil.formatFileSize(1536));
+        assertEquals("2.0 MB", FileStorageUtil.formatFileSize(2 * 1024 * 1024));
+
+        // Security: Filename validation and Path Traversal defense
+        assertThrows(IllegalArgumentException.class, () -> FileStorageUtil.validateFilename(""));
+        assertThrows(IllegalArgumentException.class, () -> FileStorageUtil.validateFilename("   "));
+        assertThrows(IllegalArgumentException.class, () -> FileStorageUtil.validateFilename("../../secret.txt"));
+        assertThrows(IllegalArgumentException.class, () -> FileStorageUtil.validateFilename("subfolder/file.pdf"));
+        assertThrows(IllegalArgumentException.class, () -> FileStorageUtil.validateFilename("subfolder\\file.pdf"));
+        assertThrows(IllegalArgumentException.class, () -> FileStorageUtil.validateFilename("file\0.pdf"));
+
+        // Security: Executable and dangerous extensions blocked
+        assertThrows(IllegalArgumentException.class, () -> FileStorageUtil.validateFilename("script.bat"));
+        assertThrows(IllegalArgumentException.class, () -> FileStorageUtil.validateFilename("malware.exe"));
+        assertThrows(IllegalArgumentException.class, () -> FileStorageUtil.validateFilename("exploit.sh"));
+        assertThrows(IllegalArgumentException.class, () -> FileStorageUtil.validateFilename("payload.cmd"));
+        assertThrows(IllegalArgumentException.class, () -> FileStorageUtil.validateFilename("installer.msi"));
+        assertThrows(IllegalArgumentException.class, () -> FileStorageUtil.validateFilename("library.dll"));
+        assertThrows(IllegalArgumentException.class, () -> FileStorageUtil.validateFilename("macro.vbs"));
+
+        // Security: Empty (0-byte) file and non-existent file validation
+        File emptyFile = Files.createTempFile("empty", ".txt").toFile();
+        assertThrows(IllegalArgumentException.class, () -> FileStorageUtil.validateFile(emptyFile));
+        assertThrows(IllegalArgumentException.class, () -> FileStorageUtil.validateFile(new File("non_existent_file.pdf")));
+        assertThrows(IllegalArgumentException.class, () -> FileStorageUtil.validateFile(null));
+
+        // 6. Test Valid Attachment Uploads
+        // Create sample valid files
+        File pdfFile = Files.createTempFile("requirements", ".pdf").toFile();
+        Files.writeString(pdfFile.toPath(), "IntelliFlow Specifications and Requirements", StandardCharsets.UTF_8);
+
+        File xlsxFile = Files.createTempFile("database", ".xlsx").toFile();
+        Files.writeString(xlsxFile.toPath(), "Table Schema and ERD Metadata", StandardCharsets.UTF_8);
+
+        File pngFile = Files.createTempFile("login-ui", ".png").toFile();
+        Files.writeString(pngFile.toPath(), "PNG Image Mockup Binary Header", StandardCharsets.UTF_8);
+
+        // Employee 1 (assigned) uploads requirements.pdf
+        UserSession.getInstance().startSession(emp1);
+        Attachment att1 = attachmentService.uploadAttachment(t1.getId(), pdfFile);
+        assertNotNull(att1);
+        assertEquals(pdfFile.getName(), att1.getFilename());
+        assertEquals("pdf", att1.getFileType());
+        assertEquals(emp1.getId(), att1.getUserId());
+        assertEquals("Priya Patel", att1.getUploaderName());
+        assertEquals(Role.EMPLOYEE, att1.getUploaderRole());
+
+        // Manager 1 (Project Manager) receives notification about Employee 1's upload
+        List<Notification> mgr1Notifs = nDao.findByUserId(mgr1.getId());
+        assertFalse(mgr1Notifs.isEmpty());
+        assertTrue(mgr1Notifs.get(0).getMessage().contains("Priya Patel attached a file"));
+
+        // Manager 1 uploads database.xlsx
+        UserSession.getInstance().startSession(mgr1);
+        Attachment att2 = attachmentService.uploadAttachment(t1.getId(), xlsxFile);
+        assertNotNull(att2);
+        assertEquals(xlsxFile.getName(), att2.getFilename());
+        assertEquals("Rahul Sharma", att2.getUploaderName());
+        assertEquals(Role.MANAGER, att2.getUploaderRole());
+
+        // Employee 1 receives notification about Manager 1's upload
+        List<Notification> emp1Notifs = nDao.findByUserId(emp1.getId());
+        assertFalse(emp1Notifs.isEmpty());
+        assertTrue(emp1Notifs.get(0).getMessage().contains("Rahul Sharma attached a file"));
+
+        // Admin uploads login-ui.png
+        UserSession.getInstance().startSession(admin);
+        Attachment att3 = attachmentService.uploadAttachment(t1.getId(), pngFile);
+        assertNotNull(att3);
+        assertEquals("Admin User", att3.getUploaderName());
+
+        // Verify retrieval of attachments for Task 1
+        UserSession.getInstance().startSession(emp1);
+        List<Attachment> attachments = attachmentService.getAttachmentsByTaskId(t1.getId());
+        assertEquals(3, attachments.size());
+
+        // Verify physical file retrieval (getAttachmentFile)
+        File retrievedFile = attachmentService.getAttachmentFile(att1.getId());
+        assertNotNull(retrievedFile);
+        assertTrue(retrievedFile.exists());
+        assertEquals("IntelliFlow Specifications and Requirements", Files.readString(retrievedFile.toPath()));
+
+        // 7. Role Authorization Tests
+        // Employee 2 (unassigned) cannot upload to or view attachments of Task 1
+        UserSession.getInstance().startSession(emp2);
+        assertThrows(UnauthorizedException.class, () -> attachmentService.uploadAttachment(t1.getId(), pdfFile));
+        assertThrows(UnauthorizedException.class, () -> attachmentService.getAttachmentsByTaskId(t1.getId()));
+        assertThrows(UnauthorizedException.class, () -> attachmentService.getAttachmentFile(att1.getId()));
+        assertThrows(UnauthorizedException.class, () -> attachmentService.deleteAttachment(att1.getId()));
+
+        // Manager 2 (not project manager) cannot upload to or view attachments of Task 1
+        UserSession.getInstance().startSession(mgr2);
+        assertThrows(UnauthorizedException.class, () -> attachmentService.uploadAttachment(t1.getId(), pdfFile));
+        assertThrows(UnauthorizedException.class, () -> attachmentService.getAttachmentsByTaskId(t1.getId()));
+        assertThrows(UnauthorizedException.class, () -> attachmentService.getAttachmentFile(att1.getId()));
+        assertThrows(UnauthorizedException.class, () -> attachmentService.deleteAttachment(att1.getId()));
+
+        // Employee 1 cannot delete Manager 1's attachment (att2)
+        UserSession.getInstance().startSession(emp1);
+        assertThrows(UnauthorizedException.class, () -> attachmentService.deleteAttachment(att2.getId()));
+
+        // Employee 1 CAN delete their own uploaded attachment (att1)
+        attachmentService.deleteAttachment(att1.getId());
+        // Verify att1 deleted from DAO and disk
+        assertFalse(Files.exists(tempDir.resolve(att1.getStoredFilename())));
+        assertEquals(2, aDao.findByTaskId(t1.getId()).size());
+
+        // Manager 1 CAN delete Admin/Employee attachment on their project (att3)
+        UserSession.getInstance().startSession(mgr1);
+        attachmentService.deleteAttachment(att3.getId());
+        assertFalse(Files.exists(tempDir.resolve(att3.getStoredFilename())));
+        assertEquals(1, aDao.findByTaskId(t1.getId()).size());
+
+        // Admin CAN delete remaining attachment (att2)
+        UserSession.getInstance().startSession(admin);
+        attachmentService.deleteAttachment(att2.getId());
+        assertFalse(Files.exists(tempDir.resolve(att2.getStoredFilename())));
+        assertEquals(0, aDao.findByTaskId(t1.getId()).size());
+
+        // 8. Verify Activity Logs for Upload and Delete
+        List<ActivityLog> logs = lDao.findAll();
+        long uploadLogs = logs.stream().filter(l -> "TASK_ATTACHMENT_UPLOAD".equals(l.getAction())).count();
+        long deleteLogs = logs.stream().filter(l -> "TASK_ATTACHMENT_DELETE".equals(l.getAction())).count();
+        assertEquals(3, uploadLogs);
+        assertEquals(3, deleteLogs);
+
+        // Cleanup temp files
+        pdfFile.delete();
+        xlsxFile.delete();
+        pngFile.delete();
+        emptyFile.delete();
     }
 }
 

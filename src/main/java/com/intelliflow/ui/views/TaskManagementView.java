@@ -5,6 +5,7 @@ import com.intelliflow.enums.Role;
 import com.intelliflow.enums.TaskPriority;
 import com.intelliflow.enums.TaskStatus;
 import com.intelliflow.exception.ValidationException;
+import com.intelliflow.model.Attachment;
 import com.intelliflow.model.Project;
 import com.intelliflow.model.Task;
 import com.intelliflow.model.User;
@@ -13,9 +14,13 @@ import com.intelliflow.ui.ThemeManager;
 import com.intelliflow.ui.components.EmptyStatePanel;
 import com.intelliflow.ui.components.ModernTable;
 import com.intelliflow.ui.components.RoundedPanel;
+import com.intelliflow.util.FileStorageUtil;
 import com.intelliflow.util.TaskSorter;
 import com.intelliflow.enums.DeadlineState;
 import com.intelliflow.util.DeadlineUtil;
+import java.io.File;
+import java.nio.file.Files;
+import java.nio.file.StandardCopyOption;
 import java.util.Locale;
 import java.time.temporal.ChronoUnit;
 
@@ -1117,6 +1122,10 @@ public class TaskManagementView extends BaseView {
         JButton commentBtn = createCardActionButton("💬", "Comments & Collaboration", e -> showTaskCommentsDialog(t));
         actionsRow.add(commentBtn);
 
+        // 📎 Task attachments & files button
+        JButton attachBtn = createCardActionButton("📎", "Attachments & Files", e -> showTaskAttachmentsDialog(t));
+        actionsRow.add(attachBtn);
+
         if (isManagerOrAdmin) {
             // ✏️ Edit button
             JButton editBtn = createCardActionButton("✏️", "Edit task", e -> showTaskForm(t));
@@ -1605,8 +1614,8 @@ public class TaskManagementView extends BaseView {
         actionPanel.setBackground(ThemeManager.COLOR_SIDEBAR);
 
         // 💬 Open Comments & Collaboration Dialog
-        JButton openCommentsBtn = new JButton("💬 Comments & Collaboration");
-        openCommentsBtn.setBackground(ThemeManager.COLOR_PRIMARY);
+        JButton openCommentsBtn = new JButton("💬 Comments");
+        openCommentsBtn.setBackground(ThemeManager.COLOR_CARD);
         openCommentsBtn.setForeground(ThemeManager.COLOR_TEXT_PRIMARY);
         openCommentsBtn.setFont(ThemeManager.FONT_BOLD_SMALL);
         openCommentsBtn.setCursor(new Cursor(Cursor.HAND_CURSOR));
@@ -1615,6 +1624,18 @@ public class TaskManagementView extends BaseView {
             showTaskCommentsDialog(task);
         });
         actionPanel.add(openCommentsBtn);
+
+        // 📎 Open Attachments Dialog
+        JButton openAttachmentsBtn = new JButton("📎 Attachments");
+        openAttachmentsBtn.setBackground(ThemeManager.COLOR_PRIMARY);
+        openAttachmentsBtn.setForeground(ThemeManager.COLOR_TEXT_PRIMARY);
+        openAttachmentsBtn.setFont(ThemeManager.FONT_BOLD_SMALL);
+        openAttachmentsBtn.setCursor(new Cursor(Cursor.HAND_CURSOR));
+        openAttachmentsBtn.addActionListener(e -> {
+            dialog.dispose();
+            showTaskAttachmentsDialog(task);
+        });
+        actionPanel.add(openAttachmentsBtn);
         
         JButton closeBtn = new JButton("Close");
         closeBtn.setBackground(ThemeManager.COLOR_CARD);
@@ -1857,6 +1878,343 @@ public class TaskManagementView extends BaseView {
         inputPanel.add(btnPanel, BorderLayout.EAST);
 
         dialog.add(inputPanel, BorderLayout.SOUTH);
+        dialog.setVisible(true);
+    }
+
+    public void showTaskAttachmentsDialog(Task task) {
+        JDialog dialog = new JDialog(mainFrame, "Task Attachments — " + task.getName(), true);
+        dialog.setSize(640, 620);
+        dialog.setLocationRelativeTo(this);
+        dialog.setLayout(new BorderLayout());
+        dialog.getContentPane().setBackground(ThemeManager.COLOR_BACKGROUND);
+
+        // Top Header
+        JPanel topHeader = new JPanel(new BorderLayout(10, 8));
+        topHeader.setBackground(ThemeManager.COLOR_CARD);
+        topHeader.setBorder(new EmptyBorder(14, 18, 14, 18));
+
+        JPanel taskInfoPanel = new JPanel();
+        taskInfoPanel.setLayout(new BoxLayout(taskInfoPanel, BoxLayout.Y_AXIS));
+        taskInfoPanel.setOpaque(false);
+
+        JLabel taskTitle = new JLabel("📎 Attachments: " + task.getName());
+        taskTitle.setFont(ThemeManager.FONT_SUBTITLE);
+        taskTitle.setForeground(ThemeManager.COLOR_TEXT_PRIMARY);
+        taskInfoPanel.add(taskTitle);
+
+        taskInfoPanel.add(Box.createVerticalStrut(4));
+
+        String prjName = projectNamesMap.getOrDefault(task.getProjectId(), "Unassigned");
+        String empName = employeeNamesMap.getOrDefault(task.getAssignedEmployeeId(), "Unassigned");
+        JLabel metaLabel = new JLabel("Project: " + prjName + "   •   Assignee: " + empName);
+        metaLabel.setFont(ThemeManager.FONT_SMALL);
+        metaLabel.setForeground(ThemeManager.COLOR_TEXT_MUTED);
+        taskInfoPanel.add(metaLabel);
+
+        topHeader.add(taskInfoPanel, BorderLayout.WEST);
+
+        JPanel badgesPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
+        badgesPanel.setOpaque(false);
+        badgesPanel.add(new PillBadge(task.getPriority().toString(), getPriorityColor(task.getPriority()), Color.WHITE, 6));
+        badgesPanel.add(new PillBadge(task.getStatus().toString(), getStatusColor(task.getStatus()), Color.WHITE, 6));
+        topHeader.add(badgesPanel, BorderLayout.EAST);
+
+        dialog.add(topHeader, BorderLayout.NORTH);
+
+        // Center Attachments Container
+        JPanel attachmentsContainer = new JPanel();
+        attachmentsContainer.setLayout(new BoxLayout(attachmentsContainer, BoxLayout.Y_AXIS));
+        attachmentsContainer.setOpaque(false);
+        attachmentsContainer.setBorder(new EmptyBorder(12, 14, 12, 14));
+
+        JScrollPane scrollPane = new JScrollPane(attachmentsContainer);
+        scrollPane.setBorder(BorderFactory.createEmptyBorder());
+        scrollPane.setOpaque(false);
+        scrollPane.getViewport().setOpaque(false);
+        scrollPane.getVerticalScrollBar().setUnitIncrement(14);
+
+        dialog.add(scrollPane, BorderLayout.CENTER);
+
+        DateTimeFormatter timeFormatter = DateTimeFormatter.ofPattern("MMM dd, yyyy hh:mm a", Locale.US);
+        User currentUser = UserSession.getInstance().getCurrentUser();
+
+        // Helper to load attachments
+        final Runnable[] loadRef = new Runnable[1];
+        loadRef[0] = () -> {
+            SwingWorker<List<Attachment>, Void> worker = new SwingWorker<>() {
+                @Override
+                protected List<Attachment> doInBackground() throws Exception {
+                    return mainFrame.getAttachmentService().getAttachmentsByTaskId(task.getId());
+                }
+
+                @Override
+                protected void done() {
+                    try {
+                        List<Attachment> list = get();
+                        attachmentsContainer.removeAll();
+
+                        if (list.isEmpty()) {
+                            JPanel emptyPanel = new JPanel(new GridBagLayout());
+                            emptyPanel.setOpaque(false);
+                            emptyPanel.setBorder(new EmptyBorder(40, 20, 40, 20));
+
+                            JLabel emptyLbl = new JLabel("📎 No files attached to this task yet. Click '➕ Attach File' below to upload files.");
+                            emptyLbl.setFont(ThemeManager.FONT_BODY);
+                            emptyLbl.setForeground(ThemeManager.COLOR_TEXT_MUTED);
+                            emptyPanel.add(emptyLbl);
+
+                            attachmentsContainer.add(emptyPanel);
+                        } else {
+                            for (Attachment a : list) {
+                                RoundedPanel attachCard = new RoundedPanel(10, ThemeManager.COLOR_CARD);
+                                attachCard.setDrawBorder(true);
+                                attachCard.setBorderColor(ThemeManager.COLOR_BORDER);
+                                attachCard.setLayout(new BorderLayout(12, 0));
+                                attachCard.setBorder(new EmptyBorder(12, 14, 12, 14));
+
+                                // Left Info
+                                JPanel infoPanel = new JPanel();
+                                infoPanel.setLayout(new BoxLayout(infoPanel, BoxLayout.Y_AXIS));
+                                infoPanel.setOpaque(false);
+
+                                // File icon & Name & Size
+                                JPanel nameRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
+                                nameRow.setOpaque(false);
+
+                                JLabel iconLabel = new JLabel(FileStorageUtil.getFileIcon(a.getFilename()));
+                                iconLabel.setFont(new Font("Segoe UI Emoji", Font.PLAIN, 18));
+                                nameRow.add(iconLabel);
+
+                                JLabel filenameLabel = new JLabel(a.getFilename());
+                                filenameLabel.setFont(ThemeManager.FONT_BOLD_SMALL);
+                                filenameLabel.setForeground(ThemeManager.COLOR_TEXT_PRIMARY);
+                                nameRow.add(filenameLabel);
+
+                                PillBadge sizeBadge = new PillBadge(
+                                        FileStorageUtil.formatFileSize(a.getFileSize()),
+                                        new Color(255, 255, 255, 20),
+                                        ThemeManager.COLOR_TEXT_MUTED,
+                                        6
+                                );
+                                nameRow.add(sizeBadge);
+
+                                infoPanel.add(nameRow);
+                                infoPanel.add(Box.createVerticalStrut(4));
+
+                                // Uploader details & Timestamp
+                                String uploader = a.getUploaderName() != null ? a.getUploaderName() : "User #" + a.getUserId();
+                                String roleStr = a.getUploaderRole() != null ? a.getUploaderRole().toString() : "EMPLOYEE";
+                                String dateStr = a.getCreatedAt() != null ? a.getCreatedAt().format(timeFormatter) : "";
+                                
+                                JLabel metaLbl = new JLabel("Uploaded by: " + uploader + " (" + roleStr.substring(0, 1) + roleStr.substring(1).toLowerCase() + ")   •   " + dateStr);
+                                metaLbl.setFont(ThemeManager.FONT_SMALL);
+                                metaLbl.setForeground(ThemeManager.COLOR_TEXT_MUTED);
+                                infoPanel.add(metaLbl);
+
+                                attachCard.add(infoPanel, BorderLayout.CENTER);
+
+                                // Right Action Buttons
+                                JPanel actionsPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
+                                actionsPanel.setOpaque(false);
+
+                                // 💾 Download / Save As button
+                                JButton downloadBtn = new JButton("💾 Save");
+                                downloadBtn.setFont(ThemeManager.FONT_SMALL);
+                                downloadBtn.setBackground(ThemeManager.COLOR_SIDEBAR);
+                                downloadBtn.setForeground(ThemeManager.COLOR_TEXT_PRIMARY);
+                                downloadBtn.setCursor(new Cursor(Cursor.HAND_CURSOR));
+                                downloadBtn.setToolTipText("Download and save attachment to disk");
+                                downloadBtn.addActionListener(ev -> {
+                                    JFileChooser fileChooser = new JFileChooser();
+                                    fileChooser.setSelectedFile(new File(a.getFilename()));
+                                    int userSelection = fileChooser.showSaveDialog(dialog);
+                                    if (userSelection == JFileChooser.APPROVE_OPTION) {
+                                        File destinationFile = fileChooser.getSelectedFile();
+                                        SwingWorker<Void, Void> downloadWorker = new SwingWorker<>() {
+                                            @Override
+                                            protected Void doInBackground() throws Exception {
+                                                File sourceFile = mainFrame.getAttachmentService().getAttachmentFile(a.getId());
+                                                Files.copy(sourceFile.toPath(), destinationFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+                                                return null;
+                                            }
+
+                                            @Override
+                                            protected void done() {
+                                                try {
+                                                    get();
+                                                    JOptionPane.showMessageDialog(dialog, "File saved successfully to: " + destinationFile.getName(), "Download Complete", JOptionPane.INFORMATION_MESSAGE);
+                                                } catch (Exception ex) {
+                                                    JOptionPane.showMessageDialog(dialog, "Failed to save file: " + ex.getMessage(), "Download Error", JOptionPane.ERROR_MESSAGE);
+                                                }
+                                            }
+                                        };
+                                        downloadWorker.execute();
+                                    }
+                                });
+                                actionsPanel.add(downloadBtn);
+
+                                // 👁️ Open button
+                                if (Desktop.isDesktopSupported()) {
+                                    JButton openBtn = new JButton("👁️ Open");
+                                    openBtn.setFont(ThemeManager.FONT_SMALL);
+                                    openBtn.setBackground(ThemeManager.COLOR_SIDEBAR);
+                                    openBtn.setForeground(ThemeManager.COLOR_TEXT_PRIMARY);
+                                    openBtn.setCursor(new Cursor(Cursor.HAND_CURSOR));
+                                    openBtn.setToolTipText("Open file with default system application");
+                                    openBtn.addActionListener(ev -> {
+                                        SwingWorker<File, Void> openWorker = new SwingWorker<>() {
+                                            @Override
+                                            protected File doInBackground() throws Exception {
+                                                return mainFrame.getAttachmentService().getAttachmentFile(a.getId());
+                                            }
+
+                                            @Override
+                                            protected void done() {
+                                                try {
+                                                    File file = get();
+                                                    Desktop.getDesktop().open(file);
+                                                } catch (Exception ex) {
+                                                    JOptionPane.showMessageDialog(dialog, "Could not open file directly: " + ex.getMessage(), "Open Error", JOptionPane.WARNING_MESSAGE);
+                                                }
+                                            }
+                                        };
+                                        openWorker.execute();
+                                    });
+                                    actionsPanel.add(openBtn);
+                                }
+
+                                // 🗑️ Delete button (authorized users only)
+                                boolean canDelete = currentUser != null && (
+                                        currentUser.getRole() == Role.ADMIN ||
+                                        currentUser.getRole() == Role.MANAGER ||
+                                        a.getUserId() == currentUser.getId()
+                                );
+                                if (canDelete) {
+                                    JButton delBtn = new JButton("🗑️");
+                                    delBtn.setFont(ThemeManager.FONT_SMALL);
+                                    delBtn.setBackground(ThemeManager.COLOR_SIDEBAR);
+                                    delBtn.setForeground(ThemeManager.COLOR_DANGER);
+                                    delBtn.setCursor(new Cursor(Cursor.HAND_CURSOR));
+                                    delBtn.setToolTipText("Delete attachment");
+                                    delBtn.addActionListener(ev -> {
+                                        int confirm = JOptionPane.showConfirmDialog(dialog,
+                                                "Are you sure you want to delete attachment '" + a.getFilename() + "'?",
+                                                "Confirm Attachment Deletion",
+                                                JOptionPane.YES_NO_OPTION,
+                                                JOptionPane.WARNING_MESSAGE);
+                                        if (confirm == JOptionPane.YES_OPTION) {
+                                            SwingWorker<Void, Void> delWorker = new SwingWorker<>() {
+                                                @Override
+                                                protected Void doInBackground() throws Exception {
+                                                    mainFrame.getAttachmentService().deleteAttachment(a.getId());
+                                                    return null;
+                                                }
+
+                                                @Override
+                                                protected void done() {
+                                                    try {
+                                                        get();
+                                                        loadRef[0].run();
+                                                    } catch (Exception ex) {
+                                                        JOptionPane.showMessageDialog(dialog, "Failed to delete attachment: " + ex.getMessage(), "Deletion Error", JOptionPane.ERROR_MESSAGE);
+                                                    }
+                                                }
+                                            };
+                                            delWorker.execute();
+                                        }
+                                    });
+                                    actionsPanel.add(delBtn);
+                                }
+
+                                attachCard.add(actionsPanel, BorderLayout.EAST);
+
+                                attachmentsContainer.add(attachCard);
+                                attachmentsContainer.add(Box.createVerticalStrut(10));
+                            }
+                        }
+
+                        attachmentsContainer.revalidate();
+                        attachmentsContainer.repaint();
+                    } catch (Exception ex) {
+                        attachmentsContainer.removeAll();
+                        JLabel errLabel = new JLabel("Failed to load attachments: " + ex.getMessage());
+                        errLabel.setForeground(ThemeManager.COLOR_DANGER);
+                        attachmentsContainer.add(errLabel);
+                        attachmentsContainer.revalidate();
+                        attachmentsContainer.repaint();
+                    }
+                }
+            };
+            worker.execute();
+        };
+
+        loadRef[0].run();
+
+        // Bottom Action Panel
+        JPanel bottomPanel = new JPanel(new BorderLayout(8, 8));
+        bottomPanel.setBackground(ThemeManager.COLOR_SIDEBAR);
+        bottomPanel.setBorder(new EmptyBorder(12, 14, 12, 14));
+
+        JButton attachBtn = new JButton("➕ Attach File");
+        attachBtn.setBackground(ThemeManager.COLOR_PRIMARY);
+        attachBtn.setForeground(ThemeManager.COLOR_TEXT_PRIMARY);
+        attachBtn.setFont(ThemeManager.FONT_BOLD_SMALL);
+        attachBtn.setCursor(new Cursor(Cursor.HAND_CURSOR));
+
+        attachBtn.addActionListener(e -> {
+            JFileChooser fileChooser = new JFileChooser();
+            fileChooser.setDialogTitle("Select File to Attach");
+            int result = fileChooser.showOpenDialog(dialog);
+            if (result == JFileChooser.APPROVE_OPTION) {
+                File selectedFile = fileChooser.getSelectedFile();
+                try {
+                    FileStorageUtil.validateFile(selectedFile);
+                } catch (Exception ex) {
+                    JOptionPane.showMessageDialog(dialog, ex.getMessage(), "Invalid File", JOptionPane.WARNING_MESSAGE);
+                    return;
+                }
+
+                attachBtn.setEnabled(false);
+                attachBtn.setText("⏳ Uploading...");
+
+                SwingWorker<Void, Void> uploadWorker = new SwingWorker<>() {
+                    @Override
+                    protected Void doInBackground() throws Exception {
+                        mainFrame.getAttachmentService().uploadAttachment(task.getId(), selectedFile);
+                        return null;
+                    }
+
+                    @Override
+                    protected void done() {
+                        attachBtn.setEnabled(true);
+                        attachBtn.setText("➕ Attach File");
+                        try {
+                            get();
+                            loadRef[0].run();
+                            mainFrame.updateNotificationCount();
+                        } catch (Exception ex) {
+                            Throwable cause = ex;
+                            while (cause.getCause() != null) cause = cause.getCause();
+                            JOptionPane.showMessageDialog(dialog, cause.getMessage(), "Upload Error", JOptionPane.ERROR_MESSAGE);
+                        }
+                    }
+                };
+                uploadWorker.execute();
+            }
+        });
+
+        bottomPanel.add(attachBtn, BorderLayout.WEST);
+
+        JButton closeBtn = new JButton("Close");
+        closeBtn.setBackground(ThemeManager.COLOR_CARD);
+        closeBtn.setForeground(ThemeManager.COLOR_TEXT_PRIMARY);
+        closeBtn.setFont(ThemeManager.FONT_BOLD_SMALL);
+        closeBtn.setCursor(new Cursor(Cursor.HAND_CURSOR));
+        closeBtn.addActionListener(e -> dialog.dispose());
+
+        bottomPanel.add(closeBtn, BorderLayout.EAST);
+
+        dialog.add(bottomPanel, BorderLayout.SOUTH);
         dialog.setVisible(true);
     }
 

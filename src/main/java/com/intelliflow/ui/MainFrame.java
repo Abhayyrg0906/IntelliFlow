@@ -27,6 +27,7 @@ public class MainFrame extends JFrame {
     private final NotificationService notificationService;
     private final ReportService reportService;
     private final CommentService commentService;
+    private final AttachmentService attachmentService;
 
     // UI Layout Components
     private CardLayout cardLayout;
@@ -54,6 +55,7 @@ public class MainFrame extends JFrame {
         this.notificationService = new NotificationServiceImpl();
         this.reportService = new ReportServiceImpl();
         this.commentService = new CommentServiceImpl();
+        this.attachmentService = new AttachmentServiceImpl();
 
         // Bootstrap default users on database if they don't exist
         try {
@@ -356,6 +358,7 @@ public class MainFrame extends JFrame {
     public NotificationService getNotificationService() { return notificationService; }
     public ReportService getReportService() { return reportService; }
     public CommentService getCommentService() { return commentService; }
+    public AttachmentService getAttachmentService() { return attachmentService; }
 
     // Getter for view instances
     public BaseView getView(String viewName) {
