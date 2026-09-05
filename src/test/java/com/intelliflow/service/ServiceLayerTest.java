@@ -8,9 +8,11 @@ import com.intelliflow.model.*;
 import com.intelliflow.service.impl.*;
 import com.intelliflow.service.interfaces.*;
 import com.intelliflow.util.CSVExporter;
+import com.intelliflow.util.DeadlineUtil;
 import com.intelliflow.util.FileStorageUtil;
 import com.intelliflow.util.PDFExporter;
 import com.intelliflow.util.PasswordUtil;
+import com.intelliflow.util.TaskSorter;
 import com.intelliflow.util.ValidationUtil;
 import com.intelliflow.util.WorkloadUtil;
 
@@ -2782,6 +2784,207 @@ public class ServiceLayerTest {
             assertFalse(log.getDescription().contains("Employee123!"));
             assertFalse(log.getDescription().contains("SecuRe#P@ss2026!"));
         }
+    }
+
+    @Test
+    void testComprehensivePhase19Validation() throws Exception {
+        UserDAO uDAO = new InMemoryUserDAO();
+        ProjectDAO pDAO = new InMemoryProjectDAO();
+        TaskDAO tDAO = new InMemoryTaskDAO();
+        NotificationDAO nDAO = new InMemoryNotificationDAO();
+        ActivityLogDAO lDAO = new InMemoryActivityLogDAO();
+        CommentDAO cDAO = new InMemoryCommentDAO();
+        AttachmentDAO aDAO = new InMemoryAttachmentDAO();
+
+        UserService uService = new UserServiceImpl(uDAO, lDAO, pDAO, tDAO);
+        ProjectService pService = new ProjectServiceImpl(pDAO, lDAO);
+        TaskService tService = new TaskServiceImpl(tDAO, pDAO, uDAO, nDAO, lDAO);
+        CommentService cService = new CommentServiceImpl(cDAO, tDAO, pDAO, uDAO, nDAO, lDAO);
+        AttachmentService aService = new AttachmentServiceImpl(aDAO, tDAO, pDAO, uDAO, nDAO, lDAO);
+        ReportService rService = new ReportServiceImpl(pDAO, tDAO, uDAO);
+
+        // --- 1. AUTHENTICATION & SESSION ---
+        uService.bootstrapDefaultUsers();
+        User admin = uService.authenticate("admin", "Admin123!");
+        assertNotNull(admin);
+        assertEquals(Role.ADMIN, admin.getRole());
+
+        // Invalid login fails safely
+        assertThrows(AuthenticationException.class, () -> uService.authenticate("admin", "WrongPass123!"));
+        assertThrows(AuthenticationException.class, () -> uService.authenticate("nonexistent", "Admin123!"));
+        assertThrows(AuthenticationException.class, () -> uService.authenticate("", ""));
+
+        // Session lifecycle
+        UserSession.getInstance().startSession(admin);
+        assertTrue(UserSession.getInstance().isLoggedIn());
+        assertEquals("admin", UserSession.getInstance().getCurrentUser().getUsername());
+        UserSession.getInstance().cleanSession();
+        assertFalse(UserSession.getInstance().isLoggedIn());
+        assertNull(UserSession.getInstance().getCurrentUser());
+
+        // --- 2. USERS CRUD & DEACTIVATION ---
+        UserSession.getInstance().startSession(admin);
+        User manager1 = uService.authenticate("manager1", "Manager123!");
+        User employee1 = uService.authenticate("employee1", "Employee123!");
+
+        // Deactivate employee
+        uService.setUserActiveStatus(employee1.getId(), false);
+        assertFalse(uDAO.findById(employee1.getId()).get().isActive());
+
+        // Deactivated user cannot login
+        assertThrows(AuthenticationException.class, () -> uService.authenticate("employee1", "Employee123!"));
+
+        // Reactivate employee
+        uService.setUserActiveStatus(employee1.getId(), true);
+        assertTrue(uDAO.findById(employee1.getId()).get().isActive());
+        assertNotNull(uService.authenticate("employee1", "Employee123!"));
+
+        // --- 3. PROJECTS & HEALTH ---
+        UserSession.getInstance().startSession(manager1);
+        Project proj = new Project();
+        proj.setName("Alpha Platform");
+        proj.setDescription("Core platform migration");
+        proj.setManagerId(manager1.getId());
+        proj.setStartDate(LocalDate.now().minusDays(10));
+        proj.setDeadline(LocalDate.now().plusDays(20));
+        proj.setStatus(ProjectStatus.ACTIVE);
+        Project savedProj = pService.createProject(proj);
+        assertNotNull(savedProj);
+
+        // Verify project health on-track
+        ProjectProgressReport rep1 = rService.getProjectProgressReport(savedProj.getId());
+        assertEquals(ProjectHealth.ON_TRACK, rep1.getHealth());
+
+        // --- 4. TASKS CRUD & WORKFLOW ---
+        Task tCritical = new Task();
+        tCritical.setProjectId(savedProj.getId());
+        tCritical.setName("Critical Migration");
+        tCritical.setAssignedEmployeeId(employee1.getId());
+        tCritical.setPriority(TaskPriority.CRITICAL);
+        tCritical.setDeadline(LocalDate.now().plusDays(5));
+        tCritical.setStatus(TaskStatus.TO_DO);
+        Task s1 = tService.createTask(tCritical);
+
+        Task tHigh = new Task();
+        tHigh.setProjectId(savedProj.getId());
+        tHigh.setName("High Gateway");
+        tHigh.setAssignedEmployeeId(employee1.getId());
+        tHigh.setPriority(TaskPriority.HIGH);
+        tHigh.setDeadline(LocalDate.now().plusDays(2));
+        tHigh.setStatus(TaskStatus.TO_DO);
+        Task s2 = tService.createTask(tHigh);
+
+        Task tMed = new Task();
+        tMed.setProjectId(savedProj.getId());
+        tMed.setName("Medium UI");
+        tMed.setAssignedEmployeeId(employee1.getId());
+        tMed.setPriority(TaskPriority.MEDIUM);
+        tMed.setDeadline(LocalDate.now().plusDays(10));
+        tMed.setStatus(TaskStatus.TO_DO);
+        Task s3 = tService.createTask(tMed);
+
+        Task tLow = new Task();
+        tLow.setProjectId(savedProj.getId());
+        tLow.setName("Low Cleanup");
+        tLow.setAssignedEmployeeId(employee1.getId());
+        tLow.setPriority(TaskPriority.LOW);
+        tLow.setDeadline(LocalDate.now().plusDays(15));
+        tLow.setStatus(TaskStatus.TO_DO);
+        Task s4 = tService.createTask(tLow);
+
+        Task tOverdue = new Task();
+        tOverdue.setProjectId(savedProj.getId());
+        tOverdue.setName("Overdue Patch");
+        tOverdue.setAssignedEmployeeId(employee1.getId());
+        tOverdue.setPriority(TaskPriority.HIGH);
+        tOverdue.setDeadline(LocalDate.now().minusDays(3));
+        tOverdue.setStatus(TaskStatus.TO_DO);
+        Task s5 = tService.createTask(tOverdue);
+
+        // --- 5. PRIORITIZATION MATRIX ---
+        List<Task> taskList = new ArrayList<>(List.of(s4, s3, s2, s1));
+        taskList.sort(TaskSorter.PRIORITY_COMPARATOR);
+        assertEquals(TaskPriority.CRITICAL, taskList.get(0).getPriority());
+        assertEquals(TaskPriority.HIGH, taskList.get(1).getPriority());
+        assertEquals(TaskPriority.MEDIUM, taskList.get(2).getPriority());
+        assertEquals(TaskPriority.LOW, taskList.get(3).getPriority());
+
+        // Same priority sorted by earliest deadline
+        Task tHighEarly = new Task();
+        tHighEarly.setProjectId(savedProj.getId());
+        tHighEarly.setName("High Early");
+        tHighEarly.setPriority(TaskPriority.HIGH);
+        tHighEarly.setDeadline(LocalDate.now().plusDays(1));
+        tHighEarly.setStatus(TaskStatus.TO_DO);
+
+        Task tHighLate = new Task();
+        tHighLate.setProjectId(savedProj.getId());
+        tHighLate.setName("High Late");
+        tHighLate.setPriority(TaskPriority.HIGH);
+        tHighLate.setDeadline(LocalDate.now().plusDays(8));
+        tHighLate.setStatus(TaskStatus.TO_DO);
+
+        List<Task> samePriorityList = new ArrayList<>(List.of(tHighLate, tHighEarly));
+        samePriorityList.sort(TaskSorter.DEADLINE_COMPARATOR);
+        assertEquals("High Early", samePriorityList.get(0).getName());
+        assertEquals("High Late", samePriorityList.get(1).getName());
+
+        // --- 6. DEADLINES CLASSIFICATION ---
+        assertEquals(DeadlineState.OVERDUE, DeadlineUtil.calculateDeadlineState(s5, LocalDate.now()));
+        
+        Task tToday = new Task();
+        tToday.setDeadline(LocalDate.now());
+        tToday.setStatus(TaskStatus.IN_PROGRESS);
+        assertEquals(DeadlineState.DUE_TODAY, DeadlineUtil.calculateDeadlineState(tToday, LocalDate.now()));
+
+        Task tDueSoon = new Task();
+        tDueSoon.setDeadline(LocalDate.now().plusDays(2));
+        tDueSoon.setStatus(TaskStatus.TO_DO);
+        assertEquals(DeadlineState.DUE_SOON, DeadlineUtil.calculateDeadlineState(tDueSoon, LocalDate.now()));
+
+        Task tUpcoming = new Task();
+        tUpcoming.setDeadline(LocalDate.now().plusDays(6));
+        tUpcoming.setStatus(TaskStatus.TO_DO);
+        assertEquals(DeadlineState.UPCOMING, DeadlineUtil.calculateDeadlineState(tUpcoming, LocalDate.now()));
+
+        Task tFuture = new Task();
+        tFuture.setDeadline(LocalDate.now().plusDays(15));
+        tFuture.setStatus(TaskStatus.TO_DO);
+        assertEquals(DeadlineState.ON_SCHEDULE, DeadlineUtil.calculateDeadlineState(tFuture, LocalDate.now()));
+
+        Task tNoDeadline = new Task();
+        tNoDeadline.setDeadline(null);
+        assertEquals(DeadlineState.NO_DEADLINE, DeadlineUtil.calculateDeadlineState(tNoDeadline, LocalDate.now()));
+
+        Task tCompletedOverdue = new Task();
+        tCompletedOverdue.setDeadline(LocalDate.now().minusDays(5));
+        tCompletedOverdue.setStatus(TaskStatus.COMPLETED);
+        assertEquals(DeadlineState.COMPLETED, DeadlineUtil.calculateDeadlineState(tCompletedOverdue, LocalDate.now()));
+
+        // --- 7. KANBAN WORKFLOW & PERSISTENCE ---
+        UserSession.getInstance().startSession(employee1);
+        // Employee moves assigned task: TO_DO -> IN_PROGRESS -> TESTING -> COMPLETED
+        tService.updateTaskStatus(s1.getId(), TaskStatus.IN_PROGRESS);
+        assertEquals(TaskStatus.IN_PROGRESS, tDAO.findById(s1.getId()).get().getStatus());
+
+        tService.updateTaskStatus(s1.getId(), TaskStatus.TESTING);
+        assertEquals(TaskStatus.TESTING, tDAO.findById(s1.getId()).get().getStatus());
+
+        tService.updateTaskStatus(s1.getId(), TaskStatus.COMPLETED);
+        assertEquals(TaskStatus.COMPLETED, tDAO.findById(s1.getId()).get().getStatus());
+
+        // --- 8. NOTIFICATIONS & ACTIVITY LOGS ---
+        List<Notification> notifications = nDAO.findByUserId(employee1.getId());
+        assertNotNull(notifications);
+
+        List<ActivityLog> activityList = lDAO.findAll();
+        assertTrue(activityList.size() > 0);
+
+        // --- 9. REPORTS GENERATION INTEGRITY ---
+        AnalyticsSummary summary = rService.getAnalyticsSummary(admin);
+        assertNotNull(summary);
+        assertTrue(summary.getTotalTasks() >= 5);
+        assertTrue(summary.getCompletedTasks() >= 1);
     }
 }
 
