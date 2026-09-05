@@ -50,24 +50,23 @@ The relational database schema consists of 5 normalized tables located in [`db/s
    This creates the database `intelliflow` and its tables.
 
 ### 2. Configure Database Credentials
-Modify the database URL, username, and password in the configuration properties file:
-[`src/main/resources/db.properties`](file:///c:/Projects/IntelliFlow/src/main/resources/db.properties)
+Configure database credentials via environment variables or a local untracked `db-local.properties` file in `src/main/resources/`:
 
-Default values:
-```properties
-db.url=jdbc:mysql://localhost:3306/intelliflow?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
-db.username=root
-db.password=root
+Environment Variables:
+```bash
+export DB_USER="your_db_username"
+export DB_PASS="your_db_password"
 ```
 
-### 3. Bootstrap Seed Users
-On the first application start, if the `users` table is detected as empty, IntelliFlow will **automatically bootstrap three default role-based accounts** with secure hashed passwords:
+Or configure via `src/main/resources/db.properties` placeholder resolution:
+```properties
+db.url=jdbc:mysql://localhost:3306/intelliflow?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
+db.username=${DB_USER}
+db.password=${DB_PASS}
+```
 
-| Role | Username | Password |
-|---|---|---|
-| **ADMIN** | `admin` | `Admin123!` |
-| **MANAGER** | `manager1` | `Manager123!` |
-| **EMPLOYEE** | `employee1` | `Employee123!` |
+### 3. Bootstrap Seed Accounts
+On first run with an empty database, IntelliFlow automatically bootstraps default role-based administrator, manager, and employee accounts hashed with BCrypt. All users are prompted to change their initial credentials upon setup.
 
 ---
 

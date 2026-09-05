@@ -106,6 +106,9 @@ public class UserServiceImpl implements UserService {
         if (!ValidationUtil.isNotEmpty(user.getUsername())) {
             throw new ValidationException("Username is required.");
         }
+        if (!ValidationUtil.isValidUsername(user.getUsername())) {
+            throw new ValidationException("Username must be 3-50 alphanumeric characters (or . - _).");
+        }
         if (!ValidationUtil.isNotEmpty(user.getEmail())) {
             throw new ValidationException("Email is required.");
         }

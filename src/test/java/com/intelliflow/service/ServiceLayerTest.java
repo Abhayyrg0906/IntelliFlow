@@ -2646,6 +2646,143 @@ public class ServiceLayerTest {
         pdfAnalytics.delete();
         Files.deleteIfExists(tempDir);
     }
+
+    @Test
+    void testComprehensiveSecurityAndAuthorizationAudit() throws Exception {
+        UserDAO uDAO = new InMemoryUserDAO();
+        ProjectDAO pDAO = new InMemoryProjectDAO();
+        TaskDAO tDAO = new InMemoryTaskDAO();
+        NotificationDAO nDAO = new InMemoryNotificationDAO();
+        ActivityLogDAO lDAO = new InMemoryActivityLogDAO();
+        CommentDAO cDAO = new InMemoryCommentDAO();
+        AttachmentDAO aDAO = new InMemoryAttachmentDAO();
+
+        UserService uService = new UserServiceImpl(uDAO, lDAO, pDAO, tDAO);
+        ProjectService pService = new ProjectServiceImpl(pDAO, lDAO);
+        TaskService tService = new TaskServiceImpl(tDAO, pDAO, uDAO, nDAO, lDAO);
+        CommentService cService = new CommentServiceImpl(cDAO, tDAO, pDAO, uDAO, nDAO, lDAO);
+        AttachmentService aService = new AttachmentServiceImpl(aDAO, tDAO, pDAO, uDAO, nDAO, lDAO);
+
+        // 1. Password Storage & Hashing Security Audit
+        String rawPass = "SecuRe#P@ss2026!";
+        String hash = PasswordUtil.hash(rawPass);
+        assertNotNull(hash);
+        assertTrue(hash.startsWith("$2a$") || hash.startsWith("$2b$") || hash.startsWith("$2y$"));
+        assertTrue(PasswordUtil.verify(rawPass, hash));
+        assertFalse(PasswordUtil.verify("WrongPassword123!", hash));
+        assertFalse(PasswordUtil.verify(rawPass, ""));
+        assertFalse(PasswordUtil.verify(rawPass, null));
+
+        // 2. Input Validation Audit (Usernames, Emails, Dates)
+        assertTrue(ValidationUtil.isValidUsername("valid_user.99"));
+        assertTrue(ValidationUtil.isValidUsername("admin-user"));
+        assertFalse(ValidationUtil.isValidUsername("ab")); // Too short (< 3)
+        assertFalse(ValidationUtil.isValidUsername("a".repeat(51))); // Too long (> 50)
+        assertFalse(ValidationUtil.isValidUsername("user name")); // Spaces disallowed
+        assertFalse(ValidationUtil.isValidUsername("admin' OR '1'='1")); // SQL Injection attempt
+        assertFalse(ValidationUtil.isValidUsername("../traversal")); // Traversal characters
+        assertFalse(ValidationUtil.isValidUsername("<script>")); // XSS injection characters
+
+        assertTrue(ValidationUtil.isValidEmail("security.team@company.org"));
+        assertFalse(ValidationUtil.isValidEmail("invalid-email"));
+        assertFalse(ValidationUtil.isValidEmail("user@.com"));
+
+        assertDoesNotThrow(() -> ValidationUtil.validateDateRange(LocalDate.now(), LocalDate.now().plusDays(5)));
+        assertThrows(ValidationException.class, () -> ValidationUtil.validateDateRange(LocalDate.now().plusDays(5), LocalDate.now()));
+        assertThrows(ValidationException.class, () -> ValidationUtil.validateDateRange(null, LocalDate.now()));
+
+        // 3. Setup 3 Roles (Admin, Manager, Employee)
+        uService.bootstrapDefaultUsers();
+        User admin = uService.authenticate("admin", "Admin123!");
+        User manager1 = uService.authenticate("manager1", "Manager123!");
+        User employee1 = uService.authenticate("employee1", "Employee123!");
+
+        // 4. Role Authorization Matrix: EMPLOYEE RESTRICTIONS
+        UserSession.getInstance().startSession(employee1);
+        
+        // Employee cannot create project
+        Project p = new Project();
+        p.setName("Unauthorized Project");
+        p.setStartDate(LocalDate.now());
+        p.setDeadline(LocalDate.now().plusDays(10));
+        assertThrows(UnauthorizedException.class, () -> pService.createProject(p));
+
+        // Employee cannot create task
+        Task t = new Task();
+        t.setName("Unauthorized Task");
+        t.setProjectId(1);
+        t.setDeadline(LocalDate.now().plusDays(5));
+        assertThrows(UnauthorizedException.class, () -> tService.createTask(t));
+
+        // Employee cannot delete user
+        assertThrows(UnauthorizedException.class, () -> uService.deleteUser(admin.getId()));
+
+        // Employee cannot activate/deactivate accounts
+        assertThrows(UnauthorizedException.class, () -> uService.setUserActiveStatus(manager1.getId(), false));
+
+        // Employee cannot register new accounts
+        User newUser = new User();
+        newUser.setUsername("hacker");
+        newUser.setEmail("hacker@test.com");
+        newUser.setFullName("Hacker User");
+        newUser.setRole(Role.ADMIN);
+        assertThrows(UnauthorizedException.class, () -> uService.register(newUser, "Hacker123!"));
+
+        // 5. Role Authorization Matrix: MANAGER RESTRICTIONS
+        UserSession.getInstance().startSession(manager1);
+
+        // Manager cannot delete or deactivate users
+        assertThrows(UnauthorizedException.class, () -> uService.deleteUser(employee1.getId()));
+        assertThrows(UnauthorizedException.class, () -> uService.setUserActiveStatus(employee1.getId(), false));
+
+        // Manager can create managed projects
+        p.setManagerId(manager1.getId());
+        p.setStatus(ProjectStatus.ACTIVE);
+        Project savedProj = pService.createProject(p);
+        assertNotNull(savedProj);
+
+        // Manager can create tasks inside their managed projects
+        t.setProjectId(savedProj.getId());
+        t.setAssignedEmployeeId(employee1.getId());
+        t.setPriority(TaskPriority.HIGH);
+        t.setStatus(TaskStatus.TO_DO);
+        Task savedTask = tService.createTask(t);
+        assertNotNull(savedTask);
+
+        // 6. Role Authorization Matrix: ADMIN PRIVILEGES & SAFETY
+        UserSession.getInstance().startSession(admin);
+        
+        // Admin can view all users
+        List<User> userList = uService.getAllUsers();
+        assertEquals(3, userList.size());
+
+        // Admin cannot delete their own active account
+        assertThrows(ValidationException.class, () -> uService.deleteUser(admin.getId()));
+
+        // Admin cannot deactivate their own active account
+        assertThrows(ValidationException.class, () -> uService.setUserActiveStatus(admin.getId(), false));
+
+        // 7. File Upload & Storage Security Hardening Audit
+        assertThrows(IllegalArgumentException.class, () -> FileStorageUtil.validateFilename("../malicious.txt"));
+        assertThrows(IllegalArgumentException.class, () -> FileStorageUtil.validateFilename("..\\malicious.txt"));
+        assertThrows(IllegalArgumentException.class, () -> FileStorageUtil.validateFilename("malicious\0.png"));
+        assertThrows(IllegalArgumentException.class, () -> FileStorageUtil.validateFilename("script.exe"));
+        assertThrows(IllegalArgumentException.class, () -> FileStorageUtil.validateFilename("payload.bat"));
+        assertThrows(IllegalArgumentException.class, () -> FileStorageUtil.validateFilename("hack.sh"));
+        assertThrows(IllegalArgumentException.class, () -> FileStorageUtil.validateFilename("trojan.jar"));
+        assertThrows(IllegalArgumentException.class, () -> FileStorageUtil.validateFilename("malware.ps1"));
+
+        // 8. Audit Log Security
+        List<ActivityLog> logs = lDAO.findAll();
+        for (ActivityLog log : logs) {
+            assertNotNull(log.getAction());
+            // Ensure no sensitive plaintext credentials logged
+            assertFalse(log.getDescription().contains("Admin123!"));
+            assertFalse(log.getDescription().contains("Manager123!"));
+            assertFalse(log.getDescription().contains("Employee123!"));
+            assertFalse(log.getDescription().contains("SecuRe#P@ss2026!"));
+        }
+    }
 }
 
 

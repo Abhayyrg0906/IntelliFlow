@@ -16,7 +16,15 @@ public class ValidationUtil {
             "^(?=.*[0-9])(?=.*[a-z])(?=.*[A-Z])(?=.*[@#$%^&+=!_\\-*?&])(?=\\S+$).{8,}$"
     );
 
+    // Username rules: 3 to 50 alphanumeric characters, underscores, hyphens, and dots
+    private static final Pattern USERNAME_PATTERN = Pattern.compile("^[A-Za-z0-9_.-]{3,50}$");
+
     private ValidationUtil() {}
+
+    public static boolean isValidUsername(String username) {
+        if (username == null) return false;
+        return USERNAME_PATTERN.matcher(username).matches();
+    }
 
     public static boolean isValidEmail(String email) {
         if (email == null) return false;
