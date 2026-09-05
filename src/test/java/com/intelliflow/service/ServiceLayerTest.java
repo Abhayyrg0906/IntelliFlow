@@ -2378,6 +2378,106 @@ public class ServiceLayerTest {
         assertTrue(logs.stream().anyMatch(l -> "USER_ACTIVATED".equals(l.getAction())));
         assertTrue(logs.stream().anyMatch(l -> "USER_DELETE".equals(l.getAction())));
     }
+
+    @Test
+    void testUserProfileAndAccountSecurityManagement() throws Exception {
+        UserDAO uDAO = new InMemoryUserDAO();
+        ActivityLogDAO lDAO = new InMemoryActivityLogDAO();
+        UserService uService = new UserServiceImpl(uDAO, lDAO);
+
+        uService.bootstrapDefaultUsers();
+        User employee = uService.authenticate("employee1", "Employee123!");
+        User admin = uService.authenticate("admin", "Admin123!");
+
+        // 1. Profile Update Validations
+        UserSession.getInstance().startSession(employee);
+
+        // Blank name should fail
+        User invalidNameUser = new User();
+        invalidNameUser.setId(employee.getId());
+        invalidNameUser.setUsername(employee.getUsername());
+        invalidNameUser.setEmail("valid@intelliflow.com");
+        invalidNameUser.setFullName("   ");
+        invalidNameUser.setRole(Role.EMPLOYEE);
+        assertThrows(ValidationException.class, () -> uService.updateUser(invalidNameUser));
+
+        // Invalid email format should fail
+        User invalidEmailUser = new User();
+        invalidEmailUser.setId(employee.getId());
+        invalidEmailUser.setUsername(employee.getUsername());
+        invalidEmailUser.setEmail("not-an-email");
+        invalidEmailUser.setFullName("Valid Name");
+        invalidEmailUser.setRole(Role.EMPLOYEE);
+        assertThrows(ValidationException.class, () -> uService.updateUser(invalidEmailUser));
+
+        // Duplicate email with admin should fail
+        User duplicateEmailUser = new User();
+        duplicateEmailUser.setId(employee.getId());
+        duplicateEmailUser.setUsername(employee.getUsername());
+        duplicateEmailUser.setEmail("admin@intelliflow.com");
+        duplicateEmailUser.setFullName("Valid Name");
+        duplicateEmailUser.setRole(Role.EMPLOYEE);
+        assertThrows(ValidationException.class, () -> uService.updateUser(duplicateEmailUser));
+
+        // Valid Profile Update succeeds
+        User validUpdate = new User();
+        validUpdate.setId(employee.getId());
+        validUpdate.setUsername(employee.getUsername());
+        validUpdate.setEmail("employee.updated@intelliflow.com");
+        validUpdate.setFullName("Updated Employee Name");
+        validUpdate.setRole(Role.EMPLOYEE);
+        uService.updateUser(validUpdate);
+
+        User refreshedEmp = uDAO.findById(employee.getId()).orElseThrow();
+        assertEquals("Updated Employee Name", refreshedEmp.getFullName());
+        assertEquals("employee.updated@intelliflow.com", refreshedEmp.getEmail());
+
+        // 2. Password Change Validations
+        // Incorrect current password fails
+        assertThrows(AuthenticationException.class, () ->
+                uService.changePassword(employee.getId(), "WrongOldPass123!", "NewPass123!", "NewPass123!"));
+
+        // Mismatched confirmation fails
+        assertThrows(ValidationException.class, () ->
+                uService.changePassword(employee.getId(), "Employee123!", "NewPass123!", "DifferentPass123!"));
+
+        // Weak password (no number / symbol / short) fails
+        assertThrows(ValidationException.class, () ->
+                uService.changePassword(employee.getId(), "Employee123!", "weakpass", "weakpass"));
+
+        // Same as current password fails
+        assertThrows(ValidationException.class, () ->
+                uService.changePassword(employee.getId(), "Employee123!", "Employee123!", "Employee123!"));
+
+        // Successful Password Change
+        uService.changePassword(employee.getId(), "Employee123!", "BrandNewPass123!", "BrandNewPass123!");
+
+        // Old password authentication fails
+        UserSession.getInstance().cleanSession();
+        assertThrows(AuthenticationException.class, () ->
+                uService.authenticate("employee1", "Employee123!"));
+
+        // New password authentication succeeds
+        User newlyLoggedIn = uService.authenticate("employee1", "BrandNewPass123!");
+        assertNotNull(newlyLoggedIn);
+        assertEquals(employee.getId(), newlyLoggedIn.getId());
+
+        // 3. Authorization Checks on Password Change
+        UserSession.getInstance().startSession(employee);
+        // Employee cannot change Admin's password
+        assertThrows(UnauthorizedException.class, () ->
+                uService.changePassword(admin.getId(), "Admin123!", "HackedAdmin123!", "HackedAdmin123!"));
+
+        // No active session cannot change password
+        UserSession.getInstance().cleanSession();
+        assertThrows(UnauthorizedException.class, () ->
+                uService.changePassword(employee.getId(), "BrandNewPass123!", "AnotherPass123!", "AnotherPass123!"));
+
+        // 4. Verify Activity Logs recorded for profile and password changes
+        List<ActivityLog> logs = lDAO.findAll();
+        assertTrue(logs.stream().anyMatch(l -> "USER_UPDATE".equals(l.getAction())));
+        assertTrue(logs.stream().anyMatch(l -> "USER_PASSWORD_CHANGE".equals(l.getAction())));
+    }
 }
 
 

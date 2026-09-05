@@ -307,6 +307,61 @@ public class UserServiceImpl implements UserService {
     }
 
     @Override
+    public void changePassword(int userId, String currentPassword, String newPassword, String confirmPassword)
+            throws AuthenticationException, ValidationException, DatabaseException {
+        User currentUser = UserSession.getInstance().getCurrentUser();
+        if (currentUser == null) {
+            throw new UnauthorizedException("Access Denied: Session is not active.");
+        }
+        if (currentUser.getRole() != Role.ADMIN && currentUser.getId() != userId) {
+            throw new UnauthorizedException("Access Denied: You can only change password for your own account.");
+        }
+
+        Optional<User> optUser = userDAO.findById(userId);
+        if (optUser.isEmpty()) {
+            throw new ValidationException("User account not found with ID: " + userId);
+        }
+        User targetUser = optUser.get();
+
+        if (!ValidationUtil.isNotEmpty(currentPassword)) {
+            throw new ValidationException("Current password is required.");
+        }
+        if (!PasswordUtil.verify(currentPassword, targetUser.getPasswordHash())) {
+            throw new AuthenticationException("Current password is incorrect.");
+        }
+
+        if (!ValidationUtil.isNotEmpty(newPassword)) {
+            throw new ValidationException("New password is required.");
+        }
+        if (!ValidationUtil.isNotEmpty(confirmPassword)) {
+            throw new ValidationException("Password confirmation is required.");
+        }
+        if (!newPassword.equals(confirmPassword)) {
+            throw new ValidationException("New password and confirmation do not match.");
+        }
+        if (!ValidationUtil.isValidPassword(newPassword)) {
+            throw new ValidationException("Password must contain at least 8 characters, including 1 uppercase, 1 lowercase, 1 number, and 1 special symbol.");
+        }
+        if (PasswordUtil.verify(newPassword, targetUser.getPasswordHash())) {
+            throw new ValidationException("New password cannot be the same as the current password.");
+        }
+
+        targetUser.setPasswordHash(PasswordUtil.hash(newPassword));
+        userDAO.update(targetUser);
+
+        // Update active session user if changing self
+        if (currentUser.getId() == targetUser.getId()) {
+            currentUser.setPasswordHash(targetUser.getPasswordHash());
+        }
+
+        ActivityLog audit = new ActivityLog();
+        audit.setUserId(currentUser.getId());
+        audit.setAction("USER_PASSWORD_CHANGE");
+        audit.setDescription("Password changed for user: " + targetUser.getUsername());
+        logDAO.create(audit);
+    }
+
+    @Override
     public void bootstrapDefaultUsers() throws DatabaseException {
         List<User> existingUsers = userDAO.findAll();
         if (existingUsers.isEmpty()) {

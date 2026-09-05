@@ -1,25 +1,27 @@
 package com.intelliflow.ui.views;
 
 import com.intelliflow.context.UserSession;
+import com.intelliflow.exception.AuthenticationException;
 import com.intelliflow.exception.ValidationException;
 import com.intelliflow.model.User;
 import com.intelliflow.ui.MainFrame;
 import com.intelliflow.ui.ThemeManager;
 import com.intelliflow.ui.components.RoundedPanel;
-import com.intelliflow.util.PasswordUtil;
-import com.intelliflow.util.ValidationUtil;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import java.awt.*;
+import java.time.format.DateTimeFormatter;
 
 public class ProfileView extends BaseView {
     private final MainFrame mainFrame;
 
     private JTextField usernameField;
     private JTextField roleField;
-    private JTextField emailField;
+    private JTextField statusField;
+    private JTextField memberSinceField;
     private JTextField fullNameField;
+    private JTextField emailField;
     private JButton saveProfileBtn;
 
     private JPasswordField currentPassField;
@@ -60,16 +62,16 @@ public class ProfileView extends BaseView {
         card.setDrawBorder(true);
         card.setBorderColor(ThemeManager.COLOR_BORDER);
         card.setLayout(new GridBagLayout());
-        card.setBorder(new EmptyBorder(30, 30, 30, 30));
+        card.setBorder(new EmptyBorder(25, 25, 25, 25));
 
         GridBagConstraints gbc = new GridBagConstraints();
         gbc.fill = GridBagConstraints.HORIZONTAL;
-        gbc.insets = new Insets(8, 0, 8, 0);
+        gbc.insets = new Insets(6, 0, 6, 0);
         gbc.weightx = 1.0;
         gbc.gridx = 0;
         gbc.gridy = 0;
 
-        JLabel title = new JLabel("Profile Settings");
+        JLabel title = new JLabel("👤 Account Profile Information");
         title.setFont(ThemeManager.FONT_SUBTITLE);
         title.setForeground(ThemeManager.COLOR_PRIMARY_HOVER);
         card.add(title, gbc);
@@ -77,48 +79,70 @@ public class ProfileView extends BaseView {
         gbc.gridy++;
         card.add(new JSeparator(JSeparator.HORIZONTAL), gbc);
 
-        // Username
+        // Username (Read-Only)
         gbc.gridy++;
-        card.add(new JLabel("Username (Read-Only):"), gbc);
+        card.add(new JLabel("Username (Immutable):"), gbc);
         gbc.gridy++;
         usernameField = new JTextField();
         usernameField.setPreferredSize(new Dimension(280, 32));
         usernameField.setEditable(false);
-        usernameField.setEnabled(false);
+        usernameField.setBackground(ThemeManager.COLOR_BACKGROUND);
         card.add(usernameField, gbc);
 
-        // Role
+        // Security Role (Read-Only)
         gbc.gridy++;
-        card.add(new JLabel("Security Role Permission:"), gbc);
+        card.add(new JLabel("Assigned Security Role:"), gbc);
         gbc.gridy++;
         roleField = new JTextField();
         roleField.setPreferredSize(new Dimension(280, 32));
         roleField.setEditable(false);
-        roleField.setEnabled(false);
+        roleField.setBackground(ThemeManager.COLOR_BACKGROUND);
         card.add(roleField, gbc);
 
-        // Full Name
+        // Account Status (Read-Only)
+        gbc.gridy++;
+        card.add(new JLabel("Account Status:"), gbc);
+        gbc.gridy++;
+        statusField = new JTextField();
+        statusField.setPreferredSize(new Dimension(280, 32));
+        statusField.setEditable(false);
+        statusField.setBackground(ThemeManager.COLOR_BACKGROUND);
+        card.add(statusField, gbc);
+
+        // Member Since (Read-Only)
+        gbc.gridy++;
+        card.add(new JLabel("Member Since:"), gbc);
+        gbc.gridy++;
+        memberSinceField = new JTextField();
+        memberSinceField.setPreferredSize(new Dimension(280, 32));
+        memberSinceField.setEditable(false);
+        memberSinceField.setBackground(ThemeManager.COLOR_BACKGROUND);
+        card.add(memberSinceField, gbc);
+
+        // Full Name (Editable)
         gbc.gridy++;
         card.add(new JLabel("Full Name:"), gbc);
         gbc.gridy++;
         fullNameField = new JTextField();
         fullNameField.setPreferredSize(new Dimension(280, 32));
+        fullNameField.putClientProperty("JTextField.placeholderText", "Enter your full name");
         card.add(fullNameField, gbc);
 
-        // Email
+        // Email (Editable)
         gbc.gridy++;
         card.add(new JLabel("Email Address:"), gbc);
         gbc.gridy++;
         emailField = new JTextField();
         emailField.setPreferredSize(new Dimension(280, 32));
+        emailField.putClientProperty("JTextField.placeholderText", "Enter your email address");
         card.add(emailField, gbc);
 
         gbc.gridy++;
-        card.add(Box.createVerticalStrut(15), gbc);
+        card.add(Box.createVerticalStrut(10), gbc);
 
         // Save Button
         gbc.gridy++;
-        saveProfileBtn = new JButton("Save Changes");
+        saveProfileBtn = new JButton("💾 Save Profile Changes");
         saveProfileBtn.setBackground(ThemeManager.COLOR_PRIMARY);
         saveProfileBtn.setForeground(ThemeManager.COLOR_TEXT_PRIMARY);
         saveProfileBtn.setFont(ThemeManager.FONT_BOLD_SMALL);
@@ -135,22 +159,27 @@ public class ProfileView extends BaseView {
         card.setDrawBorder(true);
         card.setBorderColor(ThemeManager.COLOR_BORDER);
         card.setLayout(new GridBagLayout());
-        card.setBorder(new EmptyBorder(30, 30, 30, 30));
+        card.setBorder(new EmptyBorder(25, 25, 25, 25));
 
         GridBagConstraints gbc = new GridBagConstraints();
         gbc.fill = GridBagConstraints.HORIZONTAL;
-        gbc.insets = new Insets(8, 0, 8, 0);
+        gbc.insets = new Insets(6, 0, 6, 0);
         gbc.weightx = 1.0;
         gbc.gridx = 0;
         gbc.gridy = 0;
 
-        JLabel title = new JLabel("Account Security");
+        JLabel title = new JLabel("🔒 Account Security & Password");
         title.setFont(ThemeManager.FONT_SUBTITLE);
         title.setForeground(ThemeManager.COLOR_PRIMARY_HOVER);
         card.add(title, gbc);
 
         gbc.gridy++;
         card.add(new JSeparator(JSeparator.HORIZONTAL), gbc);
+
+        // Policy Hint
+        gbc.gridy++;
+        JLabel policyHint = new JLabel("<html><small style='color:#94A3B8;'>Password must have 8+ characters, including uppercase, lowercase, number, & special symbol.</small></html>");
+        card.add(policyHint, gbc);
 
         // Current Password
         gbc.gridy++;
@@ -177,11 +206,11 @@ public class ProfileView extends BaseView {
         card.add(confirmPassField, gbc);
 
         gbc.gridy++;
-        card.add(Box.createVerticalStrut(15), gbc);
+        card.add(Box.createVerticalStrut(10), gbc);
 
         // Change Password Button
         gbc.gridy++;
-        changePassBtn = new JButton("Update Password");
+        changePassBtn = new JButton("🔑 Change Password");
         changePassBtn.setBackground(ThemeManager.COLOR_SUCCESS);
         changePassBtn.setForeground(ThemeManager.COLOR_TEXT_PRIMARY);
         changePassBtn.setFont(ThemeManager.FONT_BOLD_SMALL);
@@ -199,6 +228,11 @@ public class ProfileView extends BaseView {
         if (currentUser != null) {
             usernameField.setText(currentUser.getUsername());
             roleField.setText(currentUser.getRole().name());
+            statusField.setText(currentUser.isActive() ? "🟢 Active (Enabled)" : "🔴 Inactive (Deactivated)");
+            
+            DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
+            memberSinceField.setText(currentUser.getCreatedAt() != null ? currentUser.getCreatedAt().format(formatter) : "N/A");
+            
             fullNameField.setText(currentUser.getFullName());
             emailField.setText(currentUser.getEmail());
         }
@@ -215,13 +249,21 @@ public class ProfileView extends BaseView {
         String email = emailField.getText().trim();
         String fullName = fullNameField.getText().trim();
 
-        currentUser.setEmail(email);
-        currentUser.setFullName(fullName);
+        // Create updated payload preserving existing credentials & role
+        User updatePayload = new User();
+        updatePayload.setId(currentUser.getId());
+        updatePayload.setUsername(currentUser.getUsername());
+        updatePayload.setEmail(email);
+        updatePayload.setFullName(fullName);
+        updatePayload.setRole(currentUser.getRole());
+        updatePayload.setActive(currentUser.isActive());
+        updatePayload.setPasswordHash(currentUser.getPasswordHash());
+        updatePayload.setCreatedAt(currentUser.getCreatedAt());
 
         SwingWorker<Void, Void> worker = new SwingWorker<>() {
             @Override
             protected Void doInBackground() throws Exception {
-                mainFrame.getUserService().updateUser(currentUser);
+                mainFrame.getUserService().updateUser(updatePayload);
                 return null;
             }
 
@@ -229,13 +271,15 @@ public class ProfileView extends BaseView {
             protected void done() {
                 try {
                     get();
+                    currentUser.setEmail(email);
+                    currentUser.setFullName(fullName);
                     JOptionPane.showMessageDialog(ProfileView.this, "Profile updated successfully!", "Success", JOptionPane.INFORMATION_MESSAGE);
-                    mainFrame.showView("profile"); // Refresh
+                    mainFrame.showView("profile");
                 } catch (Exception ex) {
                     Throwable cause = ex.getCause();
                     JOptionPane.showMessageDialog(ProfileView.this,
                             cause != null ? cause.getMessage() : "Failed to update profile details.",
-                            "Validation Error",
+                            "Update Error",
                             JOptionPane.ERROR_MESSAGE);
                     refresh();
                 }
@@ -252,30 +296,10 @@ public class ProfileView extends BaseView {
         String newPassword = new String(newPassField.getPassword());
         String confirmPassword = new String(confirmPassField.getPassword());
 
-        if (!PasswordUtil.verify(currentPassword, currentUser.getPasswordHash())) {
-            JOptionPane.showMessageDialog(this, "Incorrect current password.", "Verification Error", JOptionPane.ERROR_MESSAGE);
-            return;
-        }
-
-        if (!newPassword.equals(confirmPassword)) {
-            JOptionPane.showMessageDialog(this, "New passwords do not match.", "Validation Error", JOptionPane.ERROR_MESSAGE);
-            return;
-        }
-
-        if (!ValidationUtil.isValidPassword(newPassword)) {
-            JOptionPane.showMessageDialog(this,
-                    "Password must contain at least 8 characters, including 1 uppercase, 1 lowercase, 1 number, and 1 special symbol.",
-                    "Validation Error",
-                    JOptionPane.ERROR_MESSAGE);
-            return;
-        }
-
-        currentUser.setPasswordHash(PasswordUtil.hash(newPassword));
-
         SwingWorker<Void, Void> worker = new SwingWorker<>() {
             @Override
             protected Void doInBackground() throws Exception {
-                mainFrame.getUserService().updateUser(currentUser);
+                mainFrame.getUserService().changePassword(currentUser.getId(), currentPassword, newPassword, confirmPassword);
                 return null;
             }
 
@@ -284,9 +308,13 @@ public class ProfileView extends BaseView {
                 try {
                     get();
                     JOptionPane.showMessageDialog(ProfileView.this, "Password updated successfully!", "Success", JOptionPane.INFORMATION_MESSAGE);
-                    refresh();
+                    currentPassField.setText("");
+                    newPassField.setText("");
+                    confirmPassField.setText("");
                 } catch (Exception ex) {
-                    JOptionPane.showMessageDialog(ProfileView.this, "Failed to update password. Database error.", "Error", JOptionPane.ERROR_MESSAGE);
+                    Throwable cause = ex.getCause() != null ? ex.getCause() : ex;
+                    String title = (cause instanceof AuthenticationException) ? "Authentication Error" : "Validation Error";
+                    JOptionPane.showMessageDialog(ProfileView.this, cause.getMessage(), title, JOptionPane.ERROR_MESSAGE);
                 }
             }
         };

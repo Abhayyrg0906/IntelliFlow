@@ -15,6 +15,7 @@ public interface UserService {
     void deleteUser(int id) throws DatabaseException, ValidationException;
     void updateUser(User user) throws DatabaseException, ValidationException;
     void setUserActiveStatus(int userId, boolean active) throws DatabaseException, ValidationException;
+    void changePassword(int userId, String currentPassword, String newPassword, String confirmPassword) throws AuthenticationException, ValidationException, DatabaseException;
     void bootstrapDefaultUsers() throws DatabaseException;
     List<ActivityLog> getActivityLogs() throws DatabaseException;
     List<ActivityLog> getActivityLogsForUser(User user) throws DatabaseException;
