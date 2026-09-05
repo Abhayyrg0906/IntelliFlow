@@ -66,6 +66,9 @@ public class UserServiceImpl implements UserService {
         }
 
         User user = optUser.get();
+        if (!user.isActive()) {
+            throw new AuthenticationException("Account has been deactivated. Please contact an administrator.");
+        }
         if (!PasswordUtil.verify(password, user.getPasswordHash())) {
             throw new AuthenticationException("Invalid username or password.");
         }
@@ -150,10 +153,39 @@ public class UserServiceImpl implements UserService {
     }
 
     @Override
-    public void deleteUser(int id) throws DatabaseException {
+    public List<User> searchUsers(String query, Role roleFilter, Boolean activeStatus) throws DatabaseException {
+        List<User> all = userDAO.findAll();
+        String q = query != null ? query.trim().toLowerCase() : "";
+
+        return all.stream()
+                .filter(u -> {
+                    if (!q.isEmpty()) {
+                        boolean matchesUsername = u.getUsername() != null && u.getUsername().toLowerCase().contains(q);
+                        boolean matchesEmail = u.getEmail() != null && u.getEmail().toLowerCase().contains(q);
+                        boolean matchesName = u.getFullName() != null && u.getFullName().toLowerCase().contains(q);
+                        if (!matchesUsername && !matchesEmail && !matchesName) {
+                            return false;
+                        }
+                    }
+                    if (roleFilter != null && u.getRole() != roleFilter) {
+                        return false;
+                    }
+                    if (activeStatus != null && u.isActive() != activeStatus) {
+                        return false;
+                    }
+                    return true;
+                })
+                .collect(java.util.stream.Collectors.toList());
+    }
+
+    @Override
+    public void deleteUser(int id) throws DatabaseException, ValidationException {
         User currentUser = UserSession.getInstance().getCurrentUser();
         if (currentUser == null || currentUser.getRole() != Role.ADMIN) {
             throw new UnauthorizedException("Access Denied: Only Administrators can delete user accounts.");
+        }
+        if (currentUser.getId() == id) {
+            throw new ValidationException("You cannot delete your own active administrator account.");
         }
         userDAO.delete(id);
 
@@ -165,18 +197,69 @@ public class UserServiceImpl implements UserService {
     }
 
     @Override
+    public void setUserActiveStatus(int userId, boolean active) throws DatabaseException, ValidationException {
+        User currentUser = UserSession.getInstance().getCurrentUser();
+        if (currentUser == null || currentUser.getRole() != Role.ADMIN) {
+            throw new UnauthorizedException("Access Denied: Only Administrators can activate or deactivate accounts.");
+        }
+        if (currentUser.getId() == userId && !active) {
+            throw new ValidationException("You cannot deactivate your own active administrator account.");
+        }
+        Optional<User> optUser = userDAO.findById(userId);
+        if (optUser.isEmpty()) {
+            throw new ValidationException("User account not found with ID: " + userId);
+        }
+        User user = optUser.get();
+        if (user.isActive() == active) {
+            return;
+        }
+        user.setActive(active);
+        userDAO.update(user);
+
+        ActivityLog statusLog = new ActivityLog();
+        statusLog.setUserId(currentUser.getId());
+        statusLog.setAction(active ? "USER_ACTIVATED" : "USER_DEACTIVATED");
+        statusLog.setDescription("Admin " + currentUser.getFullName() + " " + (active ? "activated" : "deactivated") + " account for " + user.getUsername());
+        logDAO.create(statusLog);
+    }
+
+    @Override
     public void updateUser(User user) throws DatabaseException, ValidationException {
         User currentUser = UserSession.getInstance().getCurrentUser();
         if (currentUser == null) {
             throw new UnauthorizedException("Access Denied: Session is not active.");
         }
-        if (currentUser.getRole() != Role.ADMIN && currentUser.getId() != user.getId()) {
-            throw new UnauthorizedException("Access Denied: You can only update your own profile details.");
-        }
-
         if (user == null) {
             throw new ValidationException("User cannot be null.");
         }
+        Optional<User> originalOpt = userDAO.findById(user.getId());
+        if (originalOpt.isEmpty()) {
+            throw new ValidationException("User account not found with ID: " + user.getId());
+        }
+        User original = originalOpt.get();
+
+        if (currentUser.getRole() != Role.ADMIN) {
+            if (currentUser.getId() != user.getId()) {
+                throw new UnauthorizedException("Access Denied: You can only update your own profile details.");
+            }
+            if (user.getRole() != original.getRole()) {
+                throw new UnauthorizedException("Access Denied: Only Administrators can change account roles.");
+            }
+            if (user.isActive() != original.isActive()) {
+                throw new UnauthorizedException("Access Denied: Only Administrators can alter account status.");
+            }
+        } else {
+            // Admin protections against self-lockout
+            if (currentUser.getId() == user.getId()) {
+                if (user.getRole() != Role.ADMIN) {
+                    throw new ValidationException("You cannot remove Administrator role from your own active account.");
+                }
+                if (!user.isActive()) {
+                    throw new ValidationException("You cannot deactivate your own active administrator account.");
+                }
+            }
+        }
+
         if (!ValidationUtil.isNotEmpty(user.getEmail()) || !ValidationUtil.isValidEmail(user.getEmail())) {
             throw new ValidationException("Invalid email address.");
         }
@@ -190,18 +273,31 @@ public class UserServiceImpl implements UserService {
             throw new ValidationException("Email address is already used by another user.");
         }
 
-        Optional<User> originalOpt = userDAO.findById(user.getId());
-        User original = originalOpt.orElse(null);
+        // Preserve password hash and created date if not set
+        if (user.getPasswordHash() == null || user.getPasswordHash().isEmpty()) {
+            user.setPasswordHash(original.getPasswordHash());
+        }
+        if (user.getCreatedAt() == null) {
+            user.setCreatedAt(original.getCreatedAt());
+        }
 
         userDAO.update(user);
 
-        if (original != null && original.getRole() != user.getRole()) {
+        if (original.getRole() != user.getRole()) {
             ActivityLog roleLog = new ActivityLog();
             roleLog.setUserId(currentUser.getId());
             roleLog.setAction("USER_ROLE_CHANGE");
             roleLog.setDescription("User " + user.getUsername() + " role changed from " + original.getRole() + " to " + user.getRole());
             logDAO.create(roleLog);
-        } else {
+        }
+        if (original.isActive() != user.isActive()) {
+            ActivityLog statusLog = new ActivityLog();
+            statusLog.setUserId(currentUser.getId());
+            statusLog.setAction(user.isActive() ? "USER_ACTIVATED" : "USER_DEACTIVATED");
+            statusLog.setDescription("Admin " + currentUser.getFullName() + " " + (user.isActive() ? "activated" : "deactivated") + " account for " + user.getUsername());
+            logDAO.create(statusLog);
+        }
+        if (original.getRole() == user.getRole() && original.isActive() == user.isActive()) {
             ActivityLog audit = new ActivityLog();
             audit.setUserId(currentUser.getId());
             audit.setAction("USER_UPDATE");

@@ -47,6 +47,7 @@ public class ServiceLayerTest {
             c.setFullName(u.getFullName());
             c.setEmail(u.getEmail());
             c.setRole(u.getRole());
+            c.setActive(u.isActive());
             c.setCreatedAt(u.getCreatedAt());
             return c;
         }
@@ -2211,6 +2212,171 @@ public class ServiceLayerTest {
         xlsxFile.delete();
         pngFile.delete();
         emptyFile.delete();
+    }
+
+    @Test
+    void testAdminUserManagementAndRBACOperations() throws Exception {
+        UserDAO uDAO = new InMemoryUserDAO();
+        ActivityLogDAO lDAO = new InMemoryActivityLogDAO();
+        ProjectDAO pDAO = new InMemoryProjectDAO();
+        TaskDAO tDAO = new InMemoryTaskDAO();
+        UserService uService = new UserServiceImpl(uDAO, lDAO, pDAO, tDAO);
+
+        // 1. Bootstrap default accounts: admin, manager1, employee1
+        uService.bootstrapDefaultUsers();
+        User admin = uService.authenticate("admin", "Admin123!");
+        User manager1 = uService.authenticate("manager1", "Manager123!");
+        User employee1 = uService.authenticate("employee1", "Employee123!");
+
+        assertNotNull(admin);
+        assertNotNull(manager1);
+        assertNotNull(employee1);
+        assertTrue(admin.isActive());
+        assertTrue(manager1.isActive());
+        assertTrue(employee1.isActive());
+
+        // 2. Admin operations
+        UserSession.getInstance().startSession(admin);
+
+        // Admin registers a new employee: dev1
+        User dev1 = new User();
+        dev1.setUsername("dev1");
+        dev1.setEmail("dev1@intelliflow.com");
+        dev1.setFullName("Developer One");
+        dev1.setRole(Role.EMPLOYEE);
+        User createdDev1 = uService.register(dev1, "DevPass123!");
+        assertNotNull(createdDev1);
+        assertTrue(createdDev1.isActive());
+        assertEquals(Role.EMPLOYEE, createdDev1.getRole());
+
+        // Search and filter capabilities
+        List<User> searchByName = uService.searchUsers("developer", null, null);
+        assertEquals(1, searchByName.size());
+        assertEquals("dev1", searchByName.get(0).getUsername());
+
+        List<User> filterManagers = uService.searchUsers(null, Role.MANAGER, null);
+        assertEquals(1, filterManagers.size());
+        assertEquals("manager1", filterManagers.get(0).getUsername());
+
+        List<User> filterActive = uService.searchUsers(null, null, true);
+        assertEquals(4, filterActive.size());
+
+        // Admin edits user information: promote dev1 to MANAGER and change name
+        createdDev1.setFullName("Lead Developer One");
+        createdDev1.setRole(Role.MANAGER);
+        uService.updateUser(createdDev1);
+
+        User updatedDev1 = uDAO.findById(createdDev1.getId()).orElseThrow();
+        assertEquals("Lead Developer One", updatedDev1.getFullName());
+        assertEquals(Role.MANAGER, updatedDev1.getRole());
+
+        // Admin deactivates employee1
+        uService.setUserActiveStatus(employee1.getId(), false);
+        User deactivatedEmp1 = uDAO.findById(employee1.getId()).orElseThrow();
+        assertFalse(deactivatedEmp1.isActive());
+
+        // Verify deactivated user CANNOT log in
+        UserSession.getInstance().cleanSession();
+        assertThrows(AuthenticationException.class, () -> uService.authenticate("employee1", "Employee123!"));
+
+        // Admin reactivates employee1
+        UserSession.getInstance().startSession(admin);
+        uService.setUserActiveStatus(employee1.getId(), true);
+        User reactivatedEmp1 = uDAO.findById(employee1.getId()).orElseThrow();
+        assertTrue(reactivatedEmp1.isActive());
+
+        // Verify reactivated user CAN log in
+        UserSession.getInstance().cleanSession();
+        User loggedInEmp1 = uService.authenticate("employee1", "Employee123!");
+        assertNotNull(loggedInEmp1);
+
+        // 3. Admin self-protection rules
+        UserSession.getInstance().startSession(admin);
+        // Admin cannot deactivate their own active account
+        assertThrows(ValidationException.class, () -> uService.setUserActiveStatus(admin.getId(), false));
+        // Admin cannot delete their own active account
+        assertThrows(ValidationException.class, () -> uService.deleteUser(admin.getId()));
+        // Admin cannot demote their own account away from ADMIN
+        User demotedAdmin = new User();
+        demotedAdmin.setId(admin.getId());
+        demotedAdmin.setUsername(admin.getUsername());
+        demotedAdmin.setEmail(admin.getEmail());
+        demotedAdmin.setFullName(admin.getFullName());
+        demotedAdmin.setRole(Role.EMPLOYEE);
+        assertThrows(ValidationException.class, () -> uService.updateUser(demotedAdmin));
+
+        // 4. Non-Admin (Manager) Authorization Enforcement
+        UserSession.getInstance().startSession(manager1);
+
+        // Manager cannot register users
+        User rogueUser = new User();
+        rogueUser.setUsername("rogue");
+        rogueUser.setEmail("rogue@intelliflow.com");
+        rogueUser.setFullName("Rogue User");
+        rogueUser.setRole(Role.EMPLOYEE);
+        assertThrows(UnauthorizedException.class, () -> uService.register(rogueUser, "RoguePass123!"));
+
+        // Manager cannot delete users
+        assertThrows(UnauthorizedException.class, () -> uService.deleteUser(employee1.getId()));
+
+        // Manager cannot activate/deactivate accounts
+        assertThrows(UnauthorizedException.class, () -> uService.setUserActiveStatus(employee1.getId(), false));
+
+        // Manager cannot update other users' accounts
+        assertThrows(UnauthorizedException.class, () -> uService.updateUser(employee1));
+
+        // Manager cannot elevate their own role to ADMIN
+        User elevateMgr = new User();
+        elevateMgr.setId(manager1.getId());
+        elevateMgr.setUsername(manager1.getUsername());
+        elevateMgr.setEmail(manager1.getEmail());
+        elevateMgr.setFullName(manager1.getFullName());
+        elevateMgr.setRole(Role.ADMIN);
+        assertThrows(UnauthorizedException.class, () -> uService.updateUser(elevateMgr));
+
+        // 5. Non-Admin (Employee) Authorization Enforcement
+        UserSession.getInstance().startSession(employee1);
+
+        // Employee cannot register, delete, or change status
+        assertThrows(UnauthorizedException.class, () -> uService.register(rogueUser, "RoguePass123!"));
+        assertThrows(UnauthorizedException.class, () -> uService.deleteUser(manager1.getId()));
+        assertThrows(UnauthorizedException.class, () -> uService.setUserActiveStatus(manager1.getId(), false));
+        assertThrows(UnauthorizedException.class, () -> uService.updateUser(manager1));
+
+        // Employee cannot change their own role to MANAGER
+        User elevateEmp = new User();
+        elevateEmp.setId(employee1.getId());
+        elevateEmp.setUsername(employee1.getUsername());
+        elevateEmp.setEmail(employee1.getEmail());
+        elevateEmp.setFullName(employee1.getFullName());
+        elevateEmp.setRole(Role.MANAGER);
+        assertThrows(UnauthorizedException.class, () -> uService.updateUser(elevateEmp));
+
+        // Employee CAN update their own profile name & email
+        User updateEmpProfile = new User();
+        updateEmpProfile.setId(employee1.getId());
+        updateEmpProfile.setUsername(employee1.getUsername());
+        updateEmpProfile.setEmail("senior.eng@intelliflow.com");
+        updateEmpProfile.setFullName("Software Engineer Senior");
+        updateEmpProfile.setRole(Role.EMPLOYEE);
+        uService.updateUser(updateEmpProfile);
+
+        User updatedSelf = uDAO.findById(employee1.getId()).orElseThrow();
+        assertEquals("Software Engineer Senior", updatedSelf.getFullName());
+        assertEquals("senior.eng@intelliflow.com", updatedSelf.getEmail());
+
+        // 6. Admin deletes user
+        UserSession.getInstance().startSession(admin);
+        uService.deleteUser(createdDev1.getId());
+        assertTrue(uDAO.findById(createdDev1.getId()).isEmpty());
+
+        // 7. Verify Activity Logs recorded for user admin lifecycle
+        List<ActivityLog> logs = lDAO.findAll();
+        assertTrue(logs.stream().anyMatch(l -> "USER_CREATE".equals(l.getAction())));
+        assertTrue(logs.stream().anyMatch(l -> "USER_ROLE_CHANGE".equals(l.getAction())));
+        assertTrue(logs.stream().anyMatch(l -> "USER_DEACTIVATED".equals(l.getAction())));
+        assertTrue(logs.stream().anyMatch(l -> "USER_ACTIVATED".equals(l.getAction())));
+        assertTrue(logs.stream().anyMatch(l -> "USER_DELETE".equals(l.getAction())));
     }
 }
 

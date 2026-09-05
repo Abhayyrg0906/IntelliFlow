@@ -10,6 +10,7 @@ public class User {
     private String passwordHash;
     private Role role;
     private String fullName;
+    private boolean active = true;
     private LocalDateTime createdAt;
 
     // Default constructor
@@ -17,12 +18,17 @@ public class User {
 
     // Full constructor
     public User(int id, String username, String email, String passwordHash, Role role, String fullName, LocalDateTime createdAt) {
+        this(id, username, email, passwordHash, role, fullName, true, createdAt);
+    }
+
+    public User(int id, String username, String email, String passwordHash, Role role, String fullName, boolean active, LocalDateTime createdAt) {
         this.id = id;
         this.username = username;
         this.email = email;
         this.passwordHash = passwordHash;
         this.role = role;
         this.fullName = fullName;
+        this.active = active;
         this.createdAt = createdAt;
     }
 
@@ -73,6 +79,14 @@ public class User {
 
     public void setFullName(String fullName) {
         this.fullName = fullName;
+    }
+
+    public boolean isActive() {
+        return active;
+    }
+
+    public void setActive(boolean active) {
+        this.active = active;
     }
 
     public LocalDateTime getCreatedAt() {

@@ -22,6 +22,15 @@ public class UserDAOImpl implements UserDAO {
         user.setPasswordHash(rs.getString("password_hash"));
         user.setRole(Role.fromString(rs.getString("role")));
         user.setFullName(rs.getString("full_name"));
+        try {
+            boolean active = rs.getBoolean("is_active");
+            if (rs.wasNull()) {
+                active = true;
+            }
+            user.setActive(active);
+        } catch (SQLException ignored) {
+            user.setActive(true);
+        }
         user.setCreatedAt(rs.getObject("created_at", LocalDateTime.class));
         return user;
     }
@@ -99,7 +108,7 @@ public class UserDAOImpl implements UserDAO {
 
     @Override
     public User create(User user) throws DatabaseException {
-        String sql = "INSERT INTO users (username, email, password_hash, role, full_name, created_at) VALUES (?, ?, ?, ?, ?, ?)";
+        String sql = "INSERT INTO users (username, email, password_hash, role, full_name, is_active, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)";
         try (Connection conn = DBUtil.getConnection();
              PreparedStatement pstmt = conn.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS)) {
             
@@ -108,9 +117,10 @@ public class UserDAOImpl implements UserDAO {
             pstmt.setString(3, user.getPasswordHash());
             pstmt.setString(4, user.getRole().name());
             pstmt.setString(5, user.getFullName());
+            pstmt.setBoolean(6, user.isActive());
             
             LocalDateTime now = user.getCreatedAt() != null ? user.getCreatedAt() : LocalDateTime.now();
-            pstmt.setObject(6, now);
+            pstmt.setObject(7, now);
             user.setCreatedAt(now);
 
             int affectedRows = pstmt.executeUpdate();
@@ -133,7 +143,7 @@ public class UserDAOImpl implements UserDAO {
 
     @Override
     public void update(User user) throws DatabaseException {
-        String sql = "UPDATE users SET username = ?, email = ?, password_hash = ?, role = ?, full_name = ? WHERE id = ?";
+        String sql = "UPDATE users SET username = ?, email = ?, password_hash = ?, role = ?, full_name = ?, is_active = ? WHERE id = ?";
         try (Connection conn = DBUtil.getConnection();
              PreparedStatement pstmt = conn.prepareStatement(sql)) {
             
@@ -142,7 +152,8 @@ public class UserDAOImpl implements UserDAO {
             pstmt.setString(3, user.getPasswordHash());
             pstmt.setString(4, user.getRole().name());
             pstmt.setString(5, user.getFullName());
-            pstmt.setInt(6, user.getId());
+            pstmt.setBoolean(6, user.isActive());
+            pstmt.setInt(7, user.getId());
 
             int affectedRows = pstmt.executeUpdate();
             if (affectedRows == 0) {

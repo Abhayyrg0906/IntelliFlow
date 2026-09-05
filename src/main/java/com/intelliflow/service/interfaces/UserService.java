@@ -11,8 +11,10 @@ public interface UserService {
     User authenticate(String username, String password) throws AuthenticationException, DatabaseException;
     User register(User user, String plainTextPassword) throws ValidationException, DatabaseException;
     List<User> getAllUsers() throws DatabaseException;
-    void deleteUser(int id) throws DatabaseException;
+    List<User> searchUsers(String query, com.intelliflow.enums.Role roleFilter, Boolean activeStatus) throws DatabaseException;
+    void deleteUser(int id) throws DatabaseException, ValidationException;
     void updateUser(User user) throws DatabaseException, ValidationException;
+    void setUserActiveStatus(int userId, boolean active) throws DatabaseException, ValidationException;
     void bootstrapDefaultUsers() throws DatabaseException;
     List<ActivityLog> getActivityLogs() throws DatabaseException;
     List<ActivityLog> getActivityLogsForUser(User user) throws DatabaseException;
