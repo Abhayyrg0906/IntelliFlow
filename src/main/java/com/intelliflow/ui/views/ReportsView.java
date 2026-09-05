@@ -14,6 +14,7 @@ import com.intelliflow.ui.components.DashboardCard;
 import com.intelliflow.ui.components.ModernTable;
 import com.intelliflow.ui.components.RoundedPanel;
 import com.intelliflow.util.CSVExporter;
+import com.intelliflow.util.PDFExporter;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
@@ -455,13 +456,26 @@ public class ReportsView extends BaseView {
         comboPanel.add(projectCombo);
         filterRow.add(comboPanel, BorderLayout.WEST);
 
-        exportButton = new JButton("📤 Export CSV Report");
+        JPanel exportBtns = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
+        exportBtns.setOpaque(false);
+
+        JButton exportPdfBtn = new JButton("📄 Export PDF");
+        exportPdfBtn.setBackground(ThemeManager.COLOR_PRIMARY_HOVER);
+        exportPdfBtn.setForeground(ThemeManager.COLOR_TEXT_PRIMARY);
+        exportPdfBtn.setFont(ThemeManager.FONT_BOLD_SMALL);
+        exportPdfBtn.setCursor(new Cursor(Cursor.HAND_CURSOR));
+        exportPdfBtn.addActionListener(e -> handleExportProjectPDF());
+
+        exportButton = new JButton("📊 Export CSV");
         exportButton.setBackground(ThemeManager.COLOR_PRIMARY);
         exportButton.setForeground(ThemeManager.COLOR_TEXT_PRIMARY);
         exportButton.setFont(ThemeManager.FONT_BOLD_SMALL);
         exportButton.setCursor(new Cursor(Cursor.HAND_CURSOR));
         exportButton.addActionListener(e -> handleExportCSV());
-        filterRow.add(exportButton, BorderLayout.EAST);
+
+        exportBtns.add(exportPdfBtn);
+        exportBtns.add(exportButton);
+        filterRow.add(exportBtns, BorderLayout.EAST);
 
         auditPanel.add(filterRow, BorderLayout.NORTH);
 
@@ -624,29 +638,42 @@ public class ReportsView extends BaseView {
     }
 
     private void addHeaderTitle(String title, String subtitle) {
-        JPanel titlePanel = new JPanel(new GridBagLayout());
+        JPanel titlePanel = new JPanel(new BorderLayout());
         titlePanel.setOpaque(false);
         titlePanel.setMaximumSize(new Dimension(Integer.MAX_VALUE, 70));
 
-        GridBagConstraints gbc = new GridBagConstraints();
-        gbc.fill = GridBagConstraints.HORIZONTAL;
-        gbc.weightx = 1.0;
-        gbc.gridx = 0;
-        gbc.gridy = 0;
+        JPanel textPanel = new JPanel();
+        textPanel.setOpaque(false);
+        textPanel.setLayout(new BoxLayout(textPanel, BoxLayout.Y_AXIS));
 
         JLabel mainTitleLabel = new JLabel(title);
         mainTitleLabel.setFont(ThemeManager.FONT_TITLE);
         mainTitleLabel.setForeground(ThemeManager.COLOR_TEXT_PRIMARY);
-        titlePanel.add(mainTitleLabel, gbc);
+        textPanel.add(mainTitleLabel);
+        textPanel.add(Box.createVerticalStrut(4));
 
-        gbc.gridy++;
-        gbc.insets = new Insets(4, 0, 15, 0);
         JLabel subLabel = new JLabel(subtitle);
         subLabel.setFont(ThemeManager.FONT_BODY);
         subLabel.setForeground(ThemeManager.COLOR_TEXT_MUTED);
-        titlePanel.add(subLabel, gbc);
+        textPanel.add(subLabel);
+
+        titlePanel.add(textPanel, BorderLayout.WEST);
+
+        // Export Reports Hub button
+        JButton exportHubBtn = new JButton("📥 Export Reports Hub");
+        exportHubBtn.setBackground(ThemeManager.COLOR_PRIMARY);
+        exportHubBtn.setForeground(ThemeManager.COLOR_TEXT_PRIMARY);
+        exportHubBtn.setFont(ThemeManager.FONT_BOLD_SMALL);
+        exportHubBtn.setCursor(new Cursor(Cursor.HAND_CURSOR));
+        exportHubBtn.addActionListener(e -> showExportHubDialog());
+
+        JPanel btnPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 8));
+        btnPanel.setOpaque(false);
+        btnPanel.add(exportHubBtn);
+        titlePanel.add(btnPanel, BorderLayout.EAST);
 
         contentPanel.add(titlePanel);
+        contentPanel.add(Box.createVerticalStrut(15));
     }
 
     private JPanel createPillBadge(String text, Color bg, Color fg) {
@@ -804,11 +831,15 @@ public class ReportsView extends BaseView {
     }
 
     private void handleExportCSV() {
-        if (currentReport == null) return;
+        if (currentReport == null) {
+            JOptionPane.showMessageDialog(this, "Please select a project with valid data to export.", "No Data", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
 
+        String defaultName = CSVExporter.getSafeFilename("Project_Report_" + currentReport.getProjectName(), "csv");
         JFileChooser fileChooser = new JFileChooser();
-        fileChooser.setDialogTitle("Export CSV Report");
-        fileChooser.setSelectedFile(new File("Project_Report_" + currentReport.getProjectName().replace(" ", "_") + ".csv"));
+        fileChooser.setDialogTitle("Export Project Report (CSV)");
+        fileChooser.setSelectedFile(new File(defaultName));
 
         int userSelection = fileChooser.showSaveDialog(this);
         if (userSelection == JFileChooser.APPROVE_OPTION) {
@@ -843,5 +874,254 @@ public class ReportsView extends BaseView {
             };
             exportWorker.execute();
         }
+    }
+
+    private void handleExportProjectPDF() {
+        if (currentReport == null) {
+            JOptionPane.showMessageDialog(this, "Please select a project with valid data to export.", "No Data", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+
+        String defaultName = CSVExporter.getSafeFilename("Project_Report_" + currentReport.getProjectName(), "pdf");
+        JFileChooser fileChooser = new JFileChooser();
+        fileChooser.setDialogTitle("Export Project Report (PDF)");
+        fileChooser.setSelectedFile(new File(defaultName));
+
+        int userSelection = fileChooser.showSaveDialog(this);
+        if (userSelection == JFileChooser.APPROVE_OPTION) {
+            File selectedFile = fileChooser.getSelectedFile();
+            if (!selectedFile.getName().toLowerCase().endsWith(".pdf")) {
+                selectedFile = new File(selectedFile.getAbsolutePath() + ".pdf");
+            }
+
+            final File finalFile = selectedFile;
+            SwingWorker<Boolean, Void> exportWorker = new SwingWorker<>() {
+                @Override
+                protected Boolean doInBackground() throws Exception {
+                    PDFExporter.exportProjectReport(currentReport, currentProjectTasks, allUsersList, finalFile);
+                    return true;
+                }
+
+                @Override
+                protected void done() {
+                    try {
+                        get();
+                        JOptionPane.showMessageDialog(ReportsView.this,
+                                "Project report PDF exported successfully to:\n" + finalFile.getAbsolutePath(),
+                                "Export Successful",
+                                JOptionPane.INFORMATION_MESSAGE);
+                    } catch (Exception ex) {
+                        JOptionPane.showMessageDialog(ReportsView.this,
+                                "Failed to export PDF report: " + ex.getMessage(),
+                                "Export Error",
+                                JOptionPane.ERROR_MESSAGE);
+                    }
+                }
+            };
+            exportWorker.execute();
+        }
+    }
+
+    private void showExportHubDialog() {
+        JDialog dialog = new JDialog(mainFrame, "📥 Export Intelligence & Reports Hub", true);
+        dialog.setSize(480, 420);
+        dialog.setLocationRelativeTo(this);
+        dialog.setLayout(new GridBagLayout());
+
+        GridBagConstraints gbc = new GridBagConstraints();
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+        gbc.insets = new Insets(8, 20, 8, 20);
+        gbc.weightx = 1.0;
+        gbc.gridx = 0;
+        gbc.gridy = 0;
+
+        JLabel titleLbl = new JLabel("Select Report Type & Export Format");
+        titleLbl.setFont(ThemeManager.FONT_SUBTITLE);
+        titleLbl.setForeground(ThemeManager.COLOR_PRIMARY_HOVER);
+        dialog.add(titleLbl, gbc);
+
+        gbc.gridy++;
+        dialog.add(new JSeparator(JSeparator.HORIZONTAL), gbc);
+
+        // Report Type Dropdown
+        gbc.gridy++;
+        dialog.add(new JLabel("Report Category:"), gbc);
+        gbc.gridy++;
+        String[] reportOptions = new String[]{
+                "📊 Executive Analytics Report",
+                "📁 Project Summary & Tasks",
+                "📋 Comprehensive Task Directory",
+                "👥 User & Security Role Directory",
+                "🔥 Task Priority Audit",
+                "📅 Deadlines & Milestone Schedule",
+                "⚙️ Activity & System Audit Logs"
+        };
+        JComboBox<String> reportCombo = new JComboBox<>(reportOptions);
+        dialog.add(reportCombo, gbc);
+
+        // Project selector (shown if Project Summary is selected)
+        gbc.gridy++;
+        JLabel projSelLbl = new JLabel("Select Target Project:");
+        dialog.add(projSelLbl, gbc);
+        gbc.gridy++;
+        JComboBox<ProjectItem> targetProjCombo = new JComboBox<>();
+        for (Project p : projectsList) {
+            targetProjCombo.addItem(new ProjectItem(p.getId(), p.getName()));
+        }
+        dialog.add(targetProjCombo, gbc);
+
+        // Visibility listener for target project selector
+        projSelLbl.setVisible(false);
+        targetProjCombo.setVisible(false);
+        reportCombo.addActionListener(e -> {
+            boolean isProj = reportCombo.getSelectedIndex() == 1;
+            projSelLbl.setVisible(isProj);
+            targetProjCombo.setVisible(isProj);
+            dialog.revalidate();
+            dialog.repaint();
+        });
+
+        // Format selector
+        gbc.gridy++;
+        dialog.add(new JLabel("Export File Format:"), gbc);
+        gbc.gridy++;
+        JPanel formatPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 15, 0));
+        formatPanel.setOpaque(false);
+        JRadioButton pdfRadio = new JRadioButton("📄 PDF Document (.pdf)", true);
+        JRadioButton csvRadio = new JRadioButton("📊 CSV Spreadsheet (.csv)");
+        ButtonGroup formatGroup = new ButtonGroup();
+        formatGroup.add(pdfRadio);
+        formatGroup.add(csvRadio);
+        formatPanel.add(pdfRadio);
+        formatPanel.add(csvRadio);
+        dialog.add(formatPanel, gbc);
+
+        gbc.gridy++;
+        dialog.add(Box.createVerticalStrut(10), gbc);
+
+        // Action Buttons
+        gbc.gridy++;
+        JPanel btnPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 0));
+        btnPanel.setOpaque(false);
+
+        JButton cancelBtn = new JButton("Cancel");
+        cancelBtn.addActionListener(e -> dialog.dispose());
+
+        JButton exportBtn = new JButton("Generate & Export");
+        exportBtn.setBackground(ThemeManager.COLOR_PRIMARY);
+        exportBtn.setForeground(ThemeManager.COLOR_TEXT_PRIMARY);
+        exportBtn.setFont(ThemeManager.FONT_BOLD_SMALL);
+
+        exportBtn.addActionListener(e -> {
+            int selIdx = reportCombo.getSelectedIndex();
+            boolean isPdf = pdfRadio.isSelected();
+            String ext = isPdf ? "pdf" : "csv";
+
+            String baseName = switch (selIdx) {
+                case 0 -> "IntelliFlow_Executive_Analytics";
+                case 1 -> {
+                    ProjectItem item = (ProjectItem) targetProjCombo.getSelectedItem();
+                    yield "IntelliFlow_Project_" + (item != null ? item.name : "Summary");
+                }
+                case 2 -> "IntelliFlow_Task_Directory";
+                case 3 -> "IntelliFlow_User_Directory";
+                case 4 -> "IntelliFlow_Priority_Audit";
+                case 5 -> "IntelliFlow_Deadline_Schedule";
+                case 6 -> "IntelliFlow_Activity_Audit";
+                default -> "IntelliFlow_Report";
+            };
+
+            String defaultFilename = CSVExporter.getSafeFilename(baseName, ext);
+            JFileChooser fileChooser = new JFileChooser();
+            fileChooser.setDialogTitle("Export " + (isPdf ? "PDF" : "CSV") + " Report");
+            fileChooser.setSelectedFile(new File(defaultFilename));
+
+            int result = fileChooser.showSaveDialog(dialog);
+            if (result == JFileChooser.APPROVE_OPTION) {
+                File targetFile = fileChooser.getSelectedFile();
+                if (!targetFile.getName().toLowerCase().endsWith("." + ext)) {
+                    targetFile = new File(targetFile.getAbsolutePath() + "." + ext);
+                }
+
+                final File fileToSave = targetFile;
+                dialog.dispose();
+
+                SwingWorker<Boolean, Void> worker = new SwingWorker<>() {
+                    @Override
+                    protected Boolean doInBackground() throws Exception {
+                        User currentUser = UserSession.getInstance().getCurrentUser();
+                        AnalyticsSummary summary = mainFrame.getReportService().getAnalyticsSummary(currentUser);
+                        List<Project> allProjects = mainFrame.getProjectService().getAllProjects();
+                        List<Task> allTasks = mainFrame.getTaskService().getAllTasks();
+                        List<User> allUsers = mainFrame.getUserService().getAllUsers();
+
+                        if (isPdf) {
+                            switch (selIdx) {
+                                case 0 -> PDFExporter.exportAnalyticsReport(summary, allProjects, fileToSave);
+                                case 1 -> {
+                                    ProjectItem item = (ProjectItem) targetProjCombo.getSelectedItem();
+                                    int pId = item != null ? item.id : allProjects.get(0).getId();
+                                    ProjectProgressReport pReport = mainFrame.getReportService().getProjectProgressReport(pId);
+                                    List<Task> pTasks = mainFrame.getTaskService().getTasksByProject(pId);
+                                    PDFExporter.exportProjectReport(pReport, pTasks, allUsers, fileToSave);
+                                }
+                                case 2 -> PDFExporter.exportTaskReport(allTasks, allProjects, allUsers, fileToSave);
+                                case 3 -> PDFExporter.exportUserReport(allUsers, fileToSave);
+                                case 4 -> PDFExporter.exportPriorityReport(allTasks, allProjects, allUsers, fileToSave);
+                                case 5 -> PDFExporter.exportDeadlineReport(allTasks, allProjects, allUsers, fileToSave);
+                                case 6 -> {
+                                    List<ActivityLog> logs = mainFrame.getUserService().getActivityLogs();
+                                    PDFExporter.exportActivityReport(logs, allUsers, fileToSave);
+                                }
+                            }
+                        } else {
+                            switch (selIdx) {
+                                case 0 -> CSVExporter.exportAnalyticsReport(summary, allProjects, fileToSave);
+                                case 1 -> {
+                                    ProjectItem item = (ProjectItem) targetProjCombo.getSelectedItem();
+                                    int pId = item != null ? item.id : allProjects.get(0).getId();
+                                    ProjectProgressReport pReport = mainFrame.getReportService().getProjectProgressReport(pId);
+                                    List<Task> pTasks = mainFrame.getTaskService().getTasksByProject(pId);
+                                    CSVExporter.exportProjectReport(pReport, pTasks, allUsers, fileToSave);
+                                }
+                                case 2 -> CSVExporter.exportTaskReport(allTasks, allProjects, allUsers, fileToSave);
+                                case 3 -> CSVExporter.exportUserReport(allUsers, fileToSave);
+                                case 4 -> CSVExporter.exportPriorityReport(allTasks, allProjects, allUsers, fileToSave);
+                                case 5 -> CSVExporter.exportDeadlineReport(allTasks, allProjects, allUsers, fileToSave);
+                                case 6 -> {
+                                    List<ActivityLog> logs = mainFrame.getUserService().getActivityLogs();
+                                    CSVExporter.exportActivityReport(logs, allUsers, fileToSave);
+                                }
+                            }
+                        }
+                        return true;
+                    }
+
+                    @Override
+                    protected void done() {
+                        try {
+                            get();
+                            JOptionPane.showMessageDialog(ReportsView.this,
+                                    "Report generated and saved successfully to:\n" + fileToSave.getAbsolutePath(),
+                                    "Export Complete",
+                                    JOptionPane.INFORMATION_MESSAGE);
+                        } catch (Exception ex) {
+                            Throwable cause = ex.getCause() != null ? ex.getCause() : ex;
+                            JOptionPane.showMessageDialog(ReportsView.this,
+                                    "Failed to generate report: " + cause.getMessage(),
+                                    "Export Error",
+                                    JOptionPane.ERROR_MESSAGE);
+                        }
+                    }
+                };
+                worker.execute();
+            }
+        });
+
+        btnPanel.add(cancelBtn);
+        btnPanel.add(exportBtn);
+        dialog.add(btnPanel, gbc);
+
+        dialog.setVisible(true);
     }
 }

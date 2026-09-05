@@ -7,7 +7,9 @@ import com.intelliflow.exception.*;
 import com.intelliflow.model.*;
 import com.intelliflow.service.impl.*;
 import com.intelliflow.service.interfaces.*;
+import com.intelliflow.util.CSVExporter;
 import com.intelliflow.util.FileStorageUtil;
+import com.intelliflow.util.PDFExporter;
 import com.intelliflow.util.PasswordUtil;
 import com.intelliflow.util.ValidationUtil;
 import com.intelliflow.util.WorkloadUtil;
@@ -2477,6 +2479,172 @@ public class ServiceLayerTest {
         List<ActivityLog> logs = lDAO.findAll();
         assertTrue(logs.stream().anyMatch(l -> "USER_UPDATE".equals(l.getAction())));
         assertTrue(logs.stream().anyMatch(l -> "USER_PASSWORD_CHANGE".equals(l.getAction())));
+    }
+
+    @Test
+    void testEnhancedCSVAndPDFReportExports() throws Exception {
+        UserDAO uDAO = new InMemoryUserDAO();
+        ProjectDAO pDAO = new InMemoryProjectDAO();
+        TaskDAO tDAO = new InMemoryTaskDAO();
+        NotificationDAO nDAO = new InMemoryNotificationDAO();
+        ActivityLogDAO lDAO = new InMemoryActivityLogDAO();
+
+        UserService uService = new UserServiceImpl(uDAO, lDAO, pDAO, tDAO);
+        ProjectService pService = new ProjectServiceImpl(pDAO, lDAO);
+        TaskService tService = new TaskServiceImpl(tDAO, pDAO, uDAO, nDAO, lDAO);
+        ReportService rService = new ReportServiceImpl(pDAO, tDAO, uDAO);
+
+        // 1. Bootstrap default accounts
+        uService.bootstrapDefaultUsers();
+        User admin = uService.authenticate("admin", "Admin123!");
+        User manager1 = uService.authenticate("manager1", "Manager123!");
+        User employee1 = uService.authenticate("employee1", "Employee123!");
+
+        // 2. Create sample project and tasks
+        UserSession.getInstance().startSession(manager1);
+        Project proj = new Project();
+        proj.setName("Cloud Infrastructure");
+        proj.setDescription("Migrate core services to cloud");
+        proj.setManagerId(manager1.getId());
+        proj.setStartDate(LocalDate.now().minusDays(10));
+        proj.setDeadline(LocalDate.now().plusDays(20));
+        proj.setStatus(ProjectStatus.ACTIVE);
+        Project savedProj = pService.createProject(proj);
+
+        Task t1 = new Task();
+        t1.setProjectId(savedProj.getId());
+        t1.setName("Database Migration");
+        t1.setDescription("Migrate MySQL schemas");
+        t1.setAssignedEmployeeId(employee1.getId());
+        t1.setPriority(TaskPriority.CRITICAL);
+        t1.setDeadline(LocalDate.now().plusDays(5));
+        t1.setStatus(TaskStatus.IN_PROGRESS);
+        tService.createTask(t1);
+
+        Task t2 = new Task();
+        t2.setProjectId(savedProj.getId());
+        t2.setName("Setup Gateway");
+        t2.setDescription("Configure API gateway routing");
+        t2.setAssignedEmployeeId(employee1.getId());
+        t2.setPriority(TaskPriority.HIGH);
+        t2.setDeadline(LocalDate.now().minusDays(2)); // Overdue
+        t2.setStatus(TaskStatus.TO_DO);
+        tService.createTask(t2);
+
+        // 3. Collect real datasets
+        List<User> users = uService.getAllUsers();
+        List<Project> projects = pService.getAllProjects();
+        List<Task> tasks = tService.getAllTasks();
+        List<ActivityLog> activityLogs = lDAO.findAll();
+        ProjectProgressReport progressReport = rService.getProjectProgressReport(savedProj.getId());
+        AnalyticsSummary analyticsSummary = rService.getAnalyticsSummary(admin);
+
+        // 4. Test safe filename generator
+        String safeName = CSVExporter.getSafeFilename("Project/Report: #1?*", "csv");
+        assertFalse(safeName.contains("/"));
+        assertFalse(safeName.contains(":"));
+        assertFalse(safeName.contains("?"));
+        assertFalse(safeName.contains("*"));
+        assertTrue(safeName.endsWith(".csv"));
+
+        Path tempDir = Files.createTempDirectory("intelliflow_export_tests");
+
+        // 5. Test all 7 CSV Report Exports
+        File csvProject = tempDir.resolve("proj_report.csv").toFile();
+        CSVExporter.exportProjectReport(progressReport, tasks, users, csvProject);
+        assertTrue(csvProject.exists() && csvProject.length() > 0);
+        String csvProjContent = Files.readString(csvProject.toPath(), StandardCharsets.UTF_8);
+        assertTrue(csvProjContent.contains("INTELLIFLOW PROJECT STATUS REPORT"));
+        assertTrue(csvProjContent.contains("Database Migration"));
+
+        File csvTask = tempDir.resolve("task_report.csv").toFile();
+        CSVExporter.exportTaskReport(tasks, projects, users, csvTask);
+        assertTrue(csvTask.exists() && csvTask.length() > 0);
+        String csvTaskContent = Files.readString(csvTask.toPath(), StandardCharsets.UTF_8);
+        assertTrue(csvTaskContent.contains("INTELLIFLOW COMPREHENSIVE TASK DIRECTORY"));
+        assertTrue(csvTaskContent.contains("Setup Gateway"));
+
+        File csvUser = tempDir.resolve("user_report.csv").toFile();
+        CSVExporter.exportUserReport(users, csvUser);
+        assertTrue(csvUser.exists() && csvUser.length() > 0);
+        String csvUserContent = Files.readString(csvUser.toPath(), StandardCharsets.UTF_8);
+        assertTrue(csvUserContent.contains("INTELLIFLOW USER AND ROLE DIRECTORY"));
+        assertTrue(csvUserContent.contains("admin@intelliflow.com"));
+        // SECURITY CRITICAL: Ensure password hashes are never exposed in user export
+        assertFalse(csvUserContent.contains("$2a$"));
+        assertFalse(csvUserContent.contains("password_hash"));
+
+        File csvPriority = tempDir.resolve("priority_report.csv").toFile();
+        CSVExporter.exportPriorityReport(tasks, projects, users, csvPriority);
+        assertTrue(csvPriority.exists() && csvPriority.length() > 0);
+
+        File csvDeadline = tempDir.resolve("deadline_report.csv").toFile();
+        CSVExporter.exportDeadlineReport(tasks, projects, users, csvDeadline);
+        assertTrue(csvDeadline.exists() && csvDeadline.length() > 0);
+        String csvDeadlineContent = Files.readString(csvDeadline.toPath(), StandardCharsets.UTF_8);
+        assertTrue(csvDeadlineContent.contains("OVERDUE"));
+
+        File csvActivity = tempDir.resolve("activity_report.csv").toFile();
+        CSVExporter.exportActivityReport(activityLogs, users, csvActivity);
+        assertTrue(csvActivity.exists() && csvActivity.length() > 0);
+
+        File csvAnalytics = tempDir.resolve("analytics_report.csv").toFile();
+        CSVExporter.exportAnalyticsReport(analyticsSummary, projects, csvAnalytics);
+        assertTrue(csvAnalytics.exists() && csvAnalytics.length() > 0);
+        String csvAnalyticsContent = Files.readString(csvAnalytics.toPath(), StandardCharsets.UTF_8);
+        assertTrue(csvAnalyticsContent.contains("KEY PERFORMANCE METRICS"));
+
+        // 6. Test all 7 PDF Report Exports (OpenPDF)
+        File pdfProject = tempDir.resolve("proj_report.pdf").toFile();
+        PDFExporter.exportProjectReport(progressReport, tasks, users, pdfProject);
+        assertTrue(pdfProject.exists() && pdfProject.length() > 100);
+        byte[] pdfHeader1 = Files.readAllBytes(pdfProject.toPath());
+        assertEquals('%', (char) pdfHeader1[0]);
+        assertEquals('P', (char) pdfHeader1[1]);
+        assertEquals('D', (char) pdfHeader1[2]);
+        assertEquals('F', (char) pdfHeader1[3]);
+
+        File pdfTask = tempDir.resolve("task_report.pdf").toFile();
+        PDFExporter.exportTaskReport(tasks, projects, users, pdfTask);
+        assertTrue(pdfTask.exists() && pdfTask.length() > 100);
+
+        File pdfUser = tempDir.resolve("user_report.pdf").toFile();
+        PDFExporter.exportUserReport(users, pdfUser);
+        assertTrue(pdfUser.exists() && pdfUser.length() > 100);
+
+        File pdfPriority = tempDir.resolve("priority_report.pdf").toFile();
+        PDFExporter.exportPriorityReport(tasks, projects, users, pdfPriority);
+        assertTrue(pdfPriority.exists() && pdfPriority.length() > 100);
+
+        File pdfDeadline = tempDir.resolve("deadline_report.pdf").toFile();
+        PDFExporter.exportDeadlineReport(tasks, projects, users, pdfDeadline);
+        assertTrue(pdfDeadline.exists() && pdfDeadline.length() > 100);
+
+        File pdfActivity = tempDir.resolve("activity_report.pdf").toFile();
+        PDFExporter.exportActivityReport(activityLogs, users, pdfActivity);
+        assertTrue(pdfActivity.exists() && pdfActivity.length() > 100);
+
+        File pdfAnalytics = tempDir.resolve("analytics_report.pdf").toFile();
+        PDFExporter.exportAnalyticsReport(analyticsSummary, projects, pdfAnalytics);
+        assertTrue(pdfAnalytics.exists() && pdfAnalytics.length() > 100);
+
+        // Cleanup temporary export files
+        csvProject.delete();
+        csvTask.delete();
+        csvUser.delete();
+        csvPriority.delete();
+        csvDeadline.delete();
+        csvActivity.delete();
+        csvAnalytics.delete();
+
+        pdfProject.delete();
+        pdfTask.delete();
+        pdfUser.delete();
+        pdfPriority.delete();
+        pdfDeadline.delete();
+        pdfActivity.delete();
+        pdfAnalytics.delete();
+        Files.deleteIfExists(tempDir);
     }
 }
 
