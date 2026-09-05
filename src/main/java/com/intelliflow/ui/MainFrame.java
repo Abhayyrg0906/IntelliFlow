@@ -67,6 +67,7 @@ public class MainFrame extends JFrame {
         // 3. Setup window configuration
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         setSize(1280, 800);
+        setMinimumSize(new Dimension(1024, 680));
         setLocationRelativeTo(null); // Center on screen
         getContentPane().setBackground(ThemeManager.COLOR_BACKGROUND);
 
@@ -213,6 +214,13 @@ public class MainFrame extends JFrame {
         userProfileBadge = new JLabel("👤 Guest");
         userProfileBadge.setFont(ThemeManager.FONT_BOLD_SMALL);
         userProfileBadge.setForeground(ThemeManager.COLOR_PRIMARY_HOVER);
+        userProfileBadge.setCursor(new Cursor(Cursor.HAND_CURSOR));
+        userProfileBadge.addMouseListener(new java.awt.event.MouseAdapter() {
+            @Override
+            public void mouseClicked(java.awt.event.MouseEvent evt) {
+                showView("profile");
+            }
+        });
         rightControls.add(userProfileBadge);
 
         header.add(rightControls, BorderLayout.EAST);
